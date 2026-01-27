@@ -1,0 +1,126 @@
+[COMMON MODELS USED IN USA]
+
+Airbus / Eurocopter
+
+EC135
+
+EC145
+
+H135
+
+H145
+
+H140
+
+AS350 (AStar / Ecureuil)
+
+EC130
+
+BO-105
+
+BK-117
+
+AS-365 (Dauphin)
+
+Bell
+
+Bell 206 (JetRanger / LongRanger)
+
+Bell 407
+
+Bell 407GXi
+
+Bell 429
+
+Bell 505
+
+Bell 412
+
+Bell 412EPX
+
+Bell 525
+
+Sikorsky
+
+S-76
+
+Leonardo (AgustaWestland)
+
+AW109
+
+AW109S
+
+AW109SP
+
+AW119
+
+AW119KX
+
+AW119MKII
+
+A-109
+
+A-139
+
+Turboprops (very high signal)
+
+Pilatus PC-12
+
+Beechcraft King Air 90 / 200 / 300
+
+FAA models: BE90, BE20, BE30
+
+Light Jets
+
+Learjet 35
+
+Learjet 36
+
+Learjet 45
+
+Cessna Citation 560
+
+Cessna Citation 650
+
+Common substrings:
+
+LIFE
+
+MED
+
+AIRMED
+
+CARE
+
+ANGEL
+
+EMS
+
+HEALTH
+
+HOSPITAL
+
+FLIGHT
+
+AEROMED
+
+What to Exclude Explicitly (reduces noise)
+
+Strongly consider excluding:
+
+Piston aircraft (C172, PA-28, etc.)
+
+Airline aircraft (A320, B737, etc.)
+
+Military-only types (unless you explicitly want them later)
+
+Owner type = INDIVIDUAL (initially)
+
+One subtle but important note
+
+Some police and EMS helicopters are registered under holding companies or aviation contractors with generic names. That’s why model filtering must come first.
+
+Behavior will do the rest.
+
+** NOTE **
+Model strings are inconsistent, filter should normalize to uppercase, match prefixes instead of full strings, and strip punctuation 
