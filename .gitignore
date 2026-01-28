@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables and credentials
+.env
+.env.local
+.env.*.local
+credentials.json
+*.key
+*.pem
+
+# Generated databases and data files
+data/*.json
+data/*.csv
+data/*.db
+data/cache/
+data/anomalies.jsonl
+data/monitor_state.db
+
+# Keep data directory structure
+!data/.gitkeep
+
+# FAA database files (large, user should download separately)
+# Uncomment if you want to exclude these:
+# ReleasableAircraft/
+
+# Test files
+test_oauth2.py
+test_imports.py
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.swp

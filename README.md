@@ -1,37 +1,53 @@
-# MediTrack - EMS Aircraft Tracking System
+# MediTrack - EMS & Police Aircraft Tracking System
 
-A system for tracking and monitoring Emergency Medical Service (EMS) aircraft in the United States using the OpenSky Network API.
+A system for tracking and monitoring Emergency Medical Service (EMS) and Police/Law Enforcement aircraft in the United States using the OpenSky Network API. The system identifies aircraft from the FAA registry database and monitors them for unusual activity patterns.
 
 ## Overview
 
-MediTrack filters the FAA aircraft registration database to identify EMS/emergency medical service aircraft, then tracks them via the OpenSky Network API. The system is designed to:
+MediTrack filters the FAA aircraft registration database to identify EMS/emergency medical service and Police/Law Enforcement aircraft, then tracks them via the OpenSky Network API. The system is designed to:
 
-- Accurately identify EMS aircraft from the FAA database
+- Accurately identify EMS and Police aircraft from the FAA database
 - Track active flights in real-time
-- Flag unusual flight patterns that may indicate emergencies
+- Detect unusual flight patterns that may indicate emergencies
 - Provide rate-limited API access to minimize API usage
+- Monitor aircraft by region with anomaly detection
 
 ## Features
 
-- **Multi-criteria filtering**: Identifies EMS aircraft by model type and owner name keywords
+- **Multi-criteria filtering**: Identifies EMS and Police aircraft by model type, owner name keywords, and N-number patterns
+- **Dual database support**: Filter and monitor both EMS and Police/Law Enforcement aircraft
 - **Confidence scoring**: Categorizes matches as high, medium, or low confidence
-- **Multiple output formats**: Generates JSON, CSV, and SQLite databases
+- **Anomaly detection**: Monitors for unusual flight patterns (speed, altitude, multiple launches, emergency squawks)
+- **Regional monitoring**: Track aircraft by US region (Northeast, Midwest, South, West, or All)
 - **Rate-limited API client**: Respects OpenSky API rate limits with automatic retry logic
 - **Response caching**: Reduces API calls by caching responses
+- **OAuth2 authentication**: Supports OpenSky's OAuth2 Client Credentials Flow
 
 ## Project Structure
 
 ```
 MediTrack/
-├── data/                    # Generated databases and cache
-│   ├── ems_aircraft.json    # JSON format database
-│   ├── ems_aircraft.csv     # CSV format database
-│   ├── ems_aircraft.db      # SQLite database
+├── data/                    # Generated databases and cache (gitignored)
+│   ├── ems_aircraft.json    # EMS aircraft database (JSON)
+│   ├── police_aircraft.json # Police aircraft database (JSON)
+│   ├── ems_aircraft.csv     # EMS aircraft database (CSV)
+│   ├── ems_aircraft.db      # EMS aircraft database (SQLite)
+│   ├── monitor_state.db     # Monitoring state database
+│   ├── anomalies.jsonl      # Anomaly log file
 │   └── cache/               # API response cache
 ├── src/                     # Source code
-│   ├── filter_ems_aircraft.py    # FAA database filtering
-│   ├── create_ems_database.py    # Database generation
-│   └── opensky_client.py          # OpenSky API client
+│   ├── filter_ems_aircraft.py      # EMS aircraft filtering
+│   ├── filter_police_aircraft.py   # Police aircraft filtering
+│   ├── create_ems_database.py      # Database generation
+│   ├── opensky_client.py            # OpenSky API client
+│   ├── monitor_service.py           # Monitoring service
+│   ├── anomaly_detector.py          # Anomaly detection logic
+│   ├── monitor_state.py             # State tracking database
+│   ├── notifier.py                  # Notification system
+│   ├── location_utils.py            # Location/geocoding utilities
+│   ├── region_selector.py           # Region selection
+│   ├── regions.py                   # Region definitions
+│   └── run_monitor.py               # Monitor entry point
 ├── ReleasableAircraft/      # FAA database files
 │   ├── MASTER.txt           # Aircraft registration database
 │   ├── ACFTREF.txt          # Aircraft model reference
@@ -51,32 +67,78 @@ MediTrack/
    pip install -r requirements.txt
    ```
 
-3. **Set up environment variables (optional but recommended):**
+3. **Set up OpenSky API authentication (recommended for better rate limits):**
+   
+   Create a `credentials.json` file in the project root:
+   ```json
+   {
+     "client_id": "your-client-id",
+     "client_secret": "your-client-secret"
+   }
+   ```
+   
+   Or copy the example file and edit it:
    ```bash
    cp .env.example .env
-   # Edit .env and add your OpenSky credentials if you have them
+   # Then edit .env with your credentials
    ```
+   
+   **Get your OpenSky API credentials:**
+   - Visit: https://opensky-network.org/accounts/login
+   - Create an account (free for research/non-commercial use)
+   - Create an API Client in your account settings
+   - Use the Client ID and Client Secret in your configuration
+   
+   **Note:** The system uses OAuth2 Client Credentials Flow. Authentication is required for better rate limits and full API access.
 
 ## Usage
 
-### Step 1: Generate EMS Aircraft Database
+### Step 1: Generate Aircraft Databases
 
-Filter the FAA database to create a filtered dataset of EMS aircraft:
+Filter the FAA database to create filtered datasets:
 
+**For EMS aircraft:**
 ```bash
-cd src
-python create_ems_database.py
+python3 src/filter_ems_aircraft.py
 ```
 
-This will:
+**For Police aircraft:**
+```bash
+python3 src/filter_police_aircraft.py
+```
+
+These scripts will:
 - Parse the FAA MASTER.txt and ACFTREF.txt files
-- Filter for EMS aircraft based on models and owner names
-- Generate databases in JSON, CSV, and SQLite formats
+- Filter for aircraft based on models, owner names, and N-number patterns
+- Generate databases in JSON format
 - Output statistics about the filtering process
 
 The filtered databases will be saved in the `data/` directory.
 
-### Step 2: Track Aircraft with OpenSky API
+### Step 2: Run the Monitoring Service
+
+Start monitoring for anomalies:
+
+```bash
+python3 src/run_monitor.py
+```
+
+You'll be prompted to:
+- Select database type (EMS or Police)
+- Choose a region to monitor (or use --region flag)
+
+The monitor will:
+- Poll the OpenSky API for active aircraft in your selected region
+- Match against your aircraft database
+- Detect anomalies (speed, altitude, multiple launches, emergency squawks)
+- Display notifications with aircraft details and links (FlightAware, Broadcastify)
+
+**Command-line options:**
+```bash
+python3 src/run_monitor.py --database ems --region west --interval 60
+```
+
+### Step 3: Track Aircraft with OpenSky API (Programmatic)
 
 Use the OpenSky client to track EMS aircraft:
 
@@ -151,23 +213,59 @@ The system recognizes common EMS aircraft models including:
 
 See `mediModels.txt` for the complete list.
 
-## OpenSky API Rate Limits
+## OpenSky API Authentication
 
-- **Anonymous users**: Limited to recent state vectors only
+The OpenSky API uses **Basic Authentication** (username/password). The client supports authentication via:
+
+1. **Environment variables** (`.env` file):
+   - `OPENSKY_USERNAME`: Your OpenSky username
+   - `OPENSKY_PASSWORD`: Your OpenSky password
+
+2. **Credentials file** (`credentials.json`):
+   ```json
+   {
+     "client_id": "your-client-id",
+     "client_secret": "your-client-secret"
+   }
+   ```
+
+3. **Environment variables** (`.env` file):
+   ```bash
+   OPENSKY_CLIENT_ID=your-client-id
+   OPENSKY_CLIENT_SECRET=your-client-secret
+   ```
+
+**Priority order:** credentials.json > environment variables
+
+### Rate Limits
+
+- **Anonymous users**: Limited to recent state vectors only (~10 requests/second)
 - **Authenticated users**: Better rate limits and access to historical data
 
-The client implements automatic rate limiting and retry logic. For production use, register for an OpenSky account at https://opensky-network.org/accounts/login and add your credentials to `.env`.
+The client implements automatic rate limiting and retry logic. For production use, register for an OpenSky account at https://opensky-network.org/accounts/login.
 
 ## Configuration
 
 Edit `config.py` or set environment variables in `.env`:
 
-- `OPENSKY_USERNAME`: OpenSky API username
-- `OPENSKY_PASSWORD`: OpenSky API password
+### Authentication
+- `OPENSKY_USERNAME`: OpenSky API username (required for authentication)
+- `OPENSKY_PASSWORD`: OpenSky API password (required for authentication)
+
+### Rate Limiting
 - `OPENSKY_RATE_LIMIT_CALLS`: Max API calls per period (default: 10)
 - `OPENSKY_RATE_LIMIT_PERIOD`: Time period in seconds (default: 1.0)
+
+### Caching
 - `CACHE_ENABLED`: Enable response caching (default: true)
 - `CACHE_MAX_AGE_SECONDS`: Cache expiration time (default: 60)
+
+### Filtering
+- `EXCLUDE_INDIVIDUAL_OWNERS`: Exclude individual owners from results (default: false)
+- `MIN_CONFIDENCE_LEVEL`: Minimum confidence level - 'low', 'medium', or 'high' (default: low)
+
+### Regional Tracking
+- `TRACKING_REGION`: Region to track - 'northeast', 'midwest', 'south', 'west', 'all', or leave empty for interactive selection
 
 ## Data Sources
 
@@ -185,6 +283,61 @@ Edit `config.py` or set environment variables in `.env`:
 ## License
 
 This project is provided as-is for tracking EMS aircraft. Ensure compliance with OpenSky Network API terms of service and FAA data usage policies.
+
+## Troubleshooting
+
+### Authentication Issues
+
+**Problem: Getting 401 Unauthorized errors**
+
+1. **Verify your credentials are correct:**
+   - Check that your username and password are spelled correctly
+   - Ensure there are no extra spaces or special characters causing issues
+   - Verify your account is activated (check email for activation link)
+
+2. **Check your configuration:**
+   - If using `.env`, ensure variables are set: `OPENSKY_USERNAME` and `OPENSKY_PASSWORD`
+   - If using `credentials.json`, verify the format:
+     ```json
+     {
+       "username": "your_username",
+       "password": "your_password"
+     }
+     ```
+   - Note: The old format with `clientId`/`clientSecret` is no longer supported
+
+3. **Test authentication:**
+   ```python
+   from src.opensky_client import OpenSkyClient
+   
+   client = OpenSkyClient(
+       username="your_username",
+       password="your_password"
+   )
+   
+   if client.test_authentication():
+       print("✓ Authentication successful")
+   else:
+       print("✗ Authentication failed - check your credentials")
+   ```
+
+4. **Register for an account:**
+   - If you don't have an account, register at: https://opensky-network.org/accounts/login
+   - Free accounts are available for research and non-commercial use
+
+**Problem: Rate limit errors (429)**
+
+- Reduce `OPENSKY_RATE_LIMIT_CALLS` in your configuration
+- Increase `OPENSKY_RATE_LIMIT_PERIOD` to slow down requests
+- Enable caching to reduce API calls
+- Consider authenticating for better rate limits
+
+**Problem: No aircraft found**
+
+- Aircraft may not be currently in flight
+- Aircraft may not be transmitting ADS-B
+- Mode S codes in your database may need verification
+- Try querying without regional filtering first
 
 ## Contributing
 

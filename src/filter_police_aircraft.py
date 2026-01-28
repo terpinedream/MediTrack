@@ -1,24 +1,26 @@
 """
-Filter EMS/Emergency Medical Service aircraft from FAA registration database.
+Filter Police/Law Enforcement aircraft from FAA registration database.
 
 This script parses the FAA MASTER and ACFTREF databases to identify aircraft
-that are likely used for EMS/emergency medical services based on:
-1. Aircraft model matching
+that are likely used for police/law enforcement based on:
+1. Aircraft model matching (helicopters and fixed-wing commonly used by police)
 2. Owner name keyword matching
-3. Exclusion rules (piston engines, airlines, inactive registrations)
+3. N-number patterns (police-specific suffixes)
+4. Exclusion rules (piston engines, airlines, inactive registrations, museums)
 """
 
 import csv
 import re
 import os
+import json
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 
 @dataclass
-class EMSAircraft:
-    """Represents a filtered EMS aircraft with metadata."""
+class PoliceAircraft:
+    """Represents a filtered police aircraft with metadata."""
     n_number: str
     mode_s_hex: str
     model_code: str
@@ -34,48 +36,71 @@ class EMSAircraft:
     status_code: str
 
 
-class EMSAircraftFilter:
-    """Filters FAA aircraft database for EMS/emergency medical service aircraft."""
+class PoliceAircraftFilter:
+    """Filters FAA aircraft database for police/law enforcement aircraft."""
     
     def __init__(self, data_dir: Path):
         """Initialize filter with data directory paths."""
         self.data_dir = data_dir
         self.master_file = data_dir / "ReleasableAircraft" / "MASTER.txt"
         self.acftref_file = data_dir / "ReleasableAircraft" / "ACFTREF.txt"
-        self.models_file = data_dir / "mediModels.txt"
         
         # Model code to model info mapping
         self.model_lookup: Dict[str, Dict[str, str]] = {}
         
-        # EMS model patterns (normalized)
-        self.ems_model_patterns: Set[str] = set()
-        
-        # EMS/Fire/Rescue owner name keywords
-        self.ems_keywords: Set[str] = {
-            # Medical/EMS keywords
-            'LIFE', 'MED', 'AIRMED', 'CARE', 'ANGEL', 'EMS', 
-            'HEALTH', 'HOSPITAL', 'FLIGHT', 'AEROMED', 'MEDICAL',
-            'AMBULANCE', 'RESCUE', 'EMERGENCY',
-            # Fire/Rescue keywords
-            'FIRE', 'FIREFIGHTING', 'FORESTRY', 'CAL FIRE', 'CALFIRE',
-            'DEPARTMENT OF FORESTRY', 'FIRE DEPARTMENT', 'FIRE DEPT',
-            'FIREFIGHTER', 'FIREFIGHT', 'FIRE STATION', 'FIRE DEP',
-            # Abbreviations
-            'FD',  # Fire Department
-            'PD',  # Police Department (for emergency response)
-            'SO',  # Sheriff's Office (for emergency response)
-            # Federal agencies
-            'USFS', 'US FOREST SERVICE', 'FOREST SERVICE',
-            'BLM', 'BUREAU OF LAND MANAGEMENT',
-            'DOI', 'DEPARTMENT OF INTERIOR', 'DEPARTMENT OF THE INTERIOR',
-            'NPS', 'NATIONAL PARK SERVICE',
-            'USFWS', 'US FISH AND WILDLIFE SERVICE', 'FISH AND WILDLIFE',
-            # Law enforcement (for emergency response)
-            'POLICE', 'SHERIFF', 'STATE PATROL', 'HIGHWAY PATROL',
-            'STATE POLICE', 'COUNTY SHERIFF'
+        # Police model patterns (helicopters and fixed-wing commonly used by police)
+        # Many police departments use similar helicopters to EMS
+        self.police_model_patterns: Set[str] = {
+            # Helicopters commonly used by police
+            'BELL 206', 'BELL 407', 'BELL 429', 'BELL 412', 'BELL 505',
+            'JETRANGER', 'LONGRANGER',
+            'EC135', 'EC145', 'H135', 'H145', 'AS350', 'ASTAR', 'ECUREUIL',
+            'AW109', 'AW119', 'A109', 'A139',
+            'S76', 'S-76',
+            'BO105', 'BK117',
+            # Fixed-wing commonly used by police
+            'CESSNA 182', 'CESSNA 206', 'CESSNA 210', 'CESSNA 172',
+            'PIPER PA28', 'PIPER PA32', 'PIPER PA34',
+            'BEECHCRAFT KING AIR', 'BE90', 'BE20', 'BE30', 'BE200',
+            'PILATUS PC12', 'PC-12',
+            # Police-specific models
+            'MD500', 'MD 500', 'MD530', 'MD 530', 'HUGHES 500',
+            'ENSTROM', 'R44', 'ROBINSON R44', 'R66', 'ROBINSON R66'
         }
         
-        # Museum exclusion keywords (for should_exclude method)
+        # Police/Law Enforcement owner name keywords
+        self.police_keywords: Set[str] = {
+            # Primary police keywords
+            'POLICE', 'POLICE DEPARTMENT', 'POLICE DEPT', 'POLICE DEP',
+            'SHERIFF', 'SHERIFFS OFFICE', 'SHERIFF OFFICE', 'SHERIFFS DEPT',
+            'SHERIFF DEPARTMENT', 'COUNTY SHERIFF',
+            'STATE POLICE', 'STATE PATROL', 'HIGHWAY PATROL',
+            'TROOPER', 'TROOPERS',
+            'LAW ENFORCEMENT', 'LAW ENFORCEMENT AGENCY',
+            'MARSHAL', 'MARSHALS', 'US MARSHAL', 'US MARSHALS',
+            'FBI', 'FEDERAL BUREAU OF INVESTIGATION',
+            'DEA', 'DRUG ENFORCEMENT ADMINISTRATION',
+            'ATF', 'BUREAU OF ALCOHOL TOBACCO FIREARMS',
+            'CUSTOMS', 'BORDER PATROL', 'IMMIGRATION',
+            'DHS', 'DEPARTMENT OF HOMELAND SECURITY',
+            'TSA', 'TRANSPORTATION SECURITY ADMINISTRATION',
+            # Abbreviations
+            'PD',  # Police Department
+            'SO',  # Sheriff's Office
+            'SP',  # State Police
+            'HP',  # Highway Patrol
+            'LE',  # Law Enforcement
+            # Federal agencies with law enforcement
+            'FEDERAL', 'FEDERAL AGENCY',
+            'DEPARTMENT OF JUSTICE', 'DOJ',
+            'DEPARTMENT OF HOMELAND SECURITY', 'DHS',
+            # State and local variations
+            'PATROL', 'AERONAUTICS', 'AERONAUTICS DIVISION',
+            'PUBLIC SAFETY', 'PUBLIC SAFETY DEPARTMENT',
+            'CRIMINAL JUSTICE', 'JUSTICE DEPARTMENT'
+        }
+        
+        # Museum exclusion keywords
         self.museum_keywords: Set[str] = {
             'MUSEUM', 'MUSEUMS', 'AVIATION MUSEUM', 'AIR MUSEUM',
             'FLIGHT MUSEUM', 'AEROSPACE MUSEUM', 'AIRSPACE MUSEUM',
@@ -93,11 +118,6 @@ class EMSAircraftFilter:
                                  'B737', 'B747', 'B757', 'B767', 'B777', 'B787',
                                  'MD80', 'MD90', 'MD11', 'CRJ', 'ERJ', 'E170', 'E175'}
         
-        # Business jet models that are typically not EMS (exclude if not matched by other criteria)
-        # These are common corporate jets that might match EMS models but aren't used for EMS
-        self.business_jet_patterns = {'CITATION', 'LEARJET', 'GULFSTREAM', 'FALCON', 
-                                      'CHALLENGER', 'GLOBAL', 'LEGACY', 'PHENOM'}
-        
     def normalize_model_string(self, model: str) -> str:
         """Normalize model string for matching: uppercase, strip punctuation."""
         if not model:
@@ -107,43 +127,6 @@ class EMSAircraftFilter:
         normalized = re.sub(r'\s+', ' ', normalized).strip()
         return normalized
     
-    def load_ems_models(self) -> None:
-        """Load EMS model patterns from mediModels.txt."""
-        if not self.models_file.exists():
-            raise FileNotFoundError(f"Models file not found: {self.models_file}")
-        
-        current_section = None
-        with open(self.models_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('[') or line.startswith('**'):
-                    if line.startswith('['):
-                        current_section = line
-                    continue
-                
-                # Skip exclusion notes and other metadata
-                if line.startswith('What to Exclude') or line.startswith('Strongly'):
-                    break
-                
-                # Skip section headers
-                if line.isupper() and len(line) > 10:
-                    continue
-                
-                # Extract model names
-                # Remove parenthetical notes like "(JetRanger / LongRanger)"
-                model = re.sub(r'\([^)]*\)', '', line).strip()
-                
-                if model and current_section != '[Common substrings:]':
-                    normalized = self.normalize_model_string(model)
-                    if normalized:
-                        self.ems_model_patterns.add(normalized)
-        
-        # Add FAA model codes for King Air
-        self.ems_model_patterns.update(['BE90', 'BE20', 'BE30'])
-        
-        print(f"Loaded {len(self.ems_model_patterns)} EMS model patterns")
-        print(f"Sample patterns: {list(self.ems_model_patterns)[:10]}")
-    
     def load_aircraft_reference(self) -> None:
         """Load aircraft reference database (ACFTREF.txt) to map codes to models."""
         if not self.acftref_file.exists():
@@ -152,19 +135,17 @@ class EMSAircraftFilter:
         with open(self.acftref_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             
-            # Get fieldnames - handle trailing comma by filtering out None/empty
             if not reader.fieldnames:
                 raise ValueError("Could not read header from ACFTREF file")
             
-            # Find the actual column keys (handle trailing comma that creates empty key)
-            # Also handle BOM (Byte Order Mark) in CSV files
+            # Find the actual column keys
             code_key = None
             mfr_key = None
             model_key = None
             
             for key in reader.fieldnames:
                 if key:
-                    key_clean = key.strip().lstrip('\ufeff')  # Remove BOM and whitespace
+                    key_clean = key.strip().lstrip('\ufeff')
                     if key_clean == 'CODE':
                         code_key = key
                     elif key_clean == 'MFR':
@@ -174,7 +155,6 @@ class EMSAircraftFilter:
             
             # Fallback: use first few columns if standard names not found
             if not code_key:
-                # Try to use first non-empty column
                 valid_keys = [k for k in reader.fieldnames if k and k.strip()]
                 if len(valid_keys) >= 3:
                     code_key = valid_keys[0]
@@ -185,7 +165,6 @@ class EMSAircraftFilter:
                     raise ValueError(f"Could not find CODE column. Available: {reader.fieldnames[:5]}")
             
             for row in reader:
-                # Use .get() to safely access columns (handles missing keys)
                 code = row.get(code_key, '').strip() if code_key else ''
                 if not code:
                     continue
@@ -201,20 +180,14 @@ class EMSAircraftFilter:
         
         print(f"Loaded {len(self.model_lookup)} aircraft model references")
     
-    def matches_ems_model(self, model_code: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    def matches_police_model(self, model_code: str) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Check if model code matches any EMS model pattern.
+        Check if model code matches any police model pattern.
         Returns: (matches, model_name, manufacturer)
         """
         if not model_code:
             return False, None, None
         
-        # First check if this is a known EMS model code
-        if hasattr(self, 'ems_model_codes') and model_code in self.ems_model_codes:
-            model_info = self.model_lookup[model_code]
-            return True, model_info['model'], model_info['manufacturer']
-        
-        # Fallback: check if model code exists and matches patterns
         if model_code not in self.model_lookup:
             return False, None, None
         
@@ -223,9 +196,9 @@ class EMSAircraftFilter:
         model_name = model_info['model']
         manufacturer = model_info['manufacturer']
         
-        # Check if normalized model matches any EMS pattern
-        for pattern in self.ems_model_patterns:
-            # Use prefix matching for flexibility
+        # Check if normalized model matches any police pattern
+        for pattern in self.police_model_patterns:
+            # Use prefix matching and substring matching for flexibility
             if model_normalized.startswith(pattern) or pattern in model_normalized:
                 return True, model_name, manufacturer
         
@@ -239,15 +212,12 @@ class EMSAircraftFilter:
         if not owner_name:
             return ""
         
-        # Convert to uppercase
         normalized = owner_name.upper()
         
-        # Remove common business suffixes (but keep the name for matching)
-        # Use word boundaries to avoid removing keywords that contain these
+        # Remove common business suffixes
         suffixes = [' LLC', ' INC', ' CORP', ' CORPORATION', ' LTD', ' LIMITED',
                    ' LP', ' LLP', ' PC', ' PLLC', ' LLC.', ' INC.', ' CORP.']
         for suffix in suffixes:
-            # Remove suffix only if it's at the end (with optional punctuation)
             normalized = re.sub(rf'{re.escape(suffix)}\s*$', '', normalized, flags=re.IGNORECASE)
         
         # Normalize whitespace
@@ -257,25 +227,22 @@ class EMSAircraftFilter:
     
     def matches_owner_keywords(self, owner_name: str) -> bool:
         """
-        Check if owner name contains EMS keywords.
+        Check if owner name contains police keywords.
         Uses normalized owner name for better matching.
         """
         if not owner_name:
             return False
         
-        # Normalize owner name (remove LLC/INC/CORP suffixes)
         owner_normalized = self.normalize_owner_name(owner_name)
         
         # Check for keywords in normalized name
-        for keyword in self.ems_keywords:
-            # Use word boundary matching for short keywords to avoid false positives
+        for keyword in self.police_keywords:
+            # Use word boundary matching for short keywords
             if len(keyword) <= 3:
-                # For short keywords (FD, EMS, PD, SO), require word boundaries
                 pattern = r'\b' + re.escape(keyword) + r'\b'
                 if re.search(pattern, owner_normalized):
                     return True
             else:
-                # For longer keywords, substring matching is fine
                 if keyword in owner_normalized:
                     return True
         return False
@@ -290,7 +257,7 @@ class EMSAircraftFilter:
         if status_code != 'V':
             return True, f"Status code: {status_code}"
         
-        # Exclude museum-owned aircraft (static displays, not operational)
+        # Exclude museum-owned aircraft
         owner_name = row.get('NAME', '').strip().upper()
         if owner_name:
             for museum_keyword in self.museum_keywords:
@@ -302,13 +269,6 @@ class EMSAircraftFilter:
                 if exclusion_keyword in owner_name:
                     return True, f"Commercial cargo: {row.get('NAME', '').strip()[:50]}"
         
-        # Exclude piston aircraft (TYPE AIRCRAFT = 4, TYPE ENGINE = 1)
-        type_aircraft = row.get('TYPE AIRCRAFT', '').strip()
-        type_engine = row.get('TYPE ENGINE', '').strip()
-        
-        if type_aircraft == '4' and type_engine == '1':
-            return True, "Piston engine aircraft"
-        
         # Exclude airline aircraft by model
         model_code = row.get('MFR MDL CODE', '').strip()
         if model_code in self.model_lookup:
@@ -318,39 +278,42 @@ class EMSAircraftFilter:
             for airline_pattern in self.airline_patterns:
                 if airline_pattern in model_normalized:
                     return True, f"Airline aircraft: {model_name}"
-            
-            # Check for business jets that aren't EMS (but only exclude if no EMS indicators)
-            # We'll check this later after determining if it's an EMS aircraft
-            # This prevents excluding legitimate EMS aircraft that happen to be jets
         
         # Exclude individual owners (TYPE REGISTRANT = 1)
         type_registrant = row.get('TYPE REGISTRANT', '').strip()
         if type_registrant == '1':
             return True, "Individual owner"
         
-        # Exclude private LLCs that don't contain emergency/police keywords
-        # This excludes generic private ownership but keeps legitimate emergency service LLCs
+        # Exclude private LLCs that don't contain police/law enforcement keywords
+        # This excludes generic private ownership but keeps legitimate police service LLCs
         if owner_name:
             # Check if it's an LLC
             is_llc = any(llc_indicator in owner_name for llc_indicator in 
                         [' LLC', ' LLC.', ' LIMITED LIABILITY', ' L.L.C.', ' L L C'])
             
             if is_llc:
-                # Check if it contains any emergency/police keywords
-                # If it's an LLC but has emergency keywords, keep it (e.g., "ABC Fire Department LLC")
-                has_emergency_keyword = any(keyword in owner_name for keyword in self.ems_keywords)
+                # Check if it contains any police/law enforcement keywords
+                # If it's an LLC but has police keywords, keep it (e.g., "ABC Police Department LLC")
+                has_police_keyword = any(keyword in owner_name for keyword in self.police_keywords)
                 
-                if not has_emergency_keyword:
-                    return True, f"Private LLC (no emergency keywords): {row.get('NAME', '').strip()[:50]}"
+                if not has_police_keyword:
+                    return True, f"Private LLC (no police keywords): {row.get('NAME', '').strip()[:50]}"
         
         return False, ""
     
-    def filter_aircraft(self) -> List[EMSAircraft]:
-        """Filter FAA MASTER database for EMS aircraft."""
+    def is_valid_mode_s_hex(self, mode_s_hex: str) -> bool:
+        """Validate Mode S code format (must be exactly 6 hex characters)."""
+        if not mode_s_hex:
+            return False
+        mode_s_hex_upper = mode_s_hex.upper().strip()
+        return bool(re.match(r'^[0-9A-F]{6}$', mode_s_hex_upper))
+    
+    def filter_aircraft(self) -> List[PoliceAircraft]:
+        """Filter FAA MASTER database for police aircraft."""
         if not self.master_file.exists():
             raise FileNotFoundError(f"MASTER file not found: {self.master_file}")
         
-        ems_aircraft = []
+        police_aircraft = []
         excluded_count = 0
         excluded_reasons = {}
         model_match_count = 0
@@ -361,19 +324,14 @@ class EMSAircraftFilter:
         individual_owner_excluded_count = 0
         private_llc_excluded_count = 0
         invalid_mode_s_count = 0
-        sample_models = []
-        sample_owners = []
-        first_few_rows = []
         
         print("Filtering aircraft database...")
         with open(self.master_file, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             
-            # Debug: Check what columns we actually have
+            # Find N-NUMBER column
+            n_number_key = None
             if reader.fieldnames:
-                print(f"  CSV columns found: {list(reader.fieldnames)[:10]}")
-                # Find N-NUMBER column (handle BOM and variations)
-                n_number_key = None
                 for key in reader.fieldnames:
                     if key:
                         key_clean = key.strip().lstrip('\ufeff')
@@ -381,55 +339,17 @@ class EMSAircraftFilter:
                             n_number_key = key
                             break
                 if not n_number_key:
-                    # Try first column
                     n_number_key = reader.fieldnames[0] if reader.fieldnames else 'N-NUMBER'
-                    print(f"  Warning: Using first column as N-NUMBER: {n_number_key}")
-                else:
-                    print(f"  Using N-NUMBER column: '{n_number_key}'")
             
             for idx, row in enumerate(reader):
-                # Collect first few rows for debugging (before any processing)
-                if idx < 5:
-                    # Try multiple ways to get N-number
-                    n_num = row.get('N-NUMBER', '') or row.get(n_number_key, '') if 'n_number_key' in locals() else row.get('N-NUMBER', '')
-                    first_few_rows.append({
-                        'n_number': n_num.strip() if n_num else '',
-                        'model_code': row.get('MFR MDL CODE', '').strip(),
-                        'owner': row.get('NAME', '').strip()[:30],
-                        'status': row.get('STATUS CODE', '').strip(),
-                        'type_acft': row.get('TYPE AIRCRAFT', '').strip(),
-                        'type_eng': row.get('TYPE ENGINE', '').strip()
-                    })
-                
-                # Extract data early for sample collection - handle N-number column variations
-                n_number = (row.get('N-NUMBER', '') or 
-                           (row.get(n_number_key, '') if 'n_number_key' in locals() else '')).strip()
-                model_code = row.get('MFR MDL CODE', '').strip()
-                owner_name = row.get('NAME', '').strip()
-                
-                # Collect samples for debugging - collect from ALL rows to see what we have
-                if len(sample_models) < 200 and model_code:
-                    in_lookup = model_code in self.model_lookup
-                    is_ems_code = hasattr(self, 'ems_model_codes') and model_code in self.ems_model_codes
-                    sample_models.append((model_code, in_lookup, is_ems_code, n_number))
-                    # If we find an EMS code, print it immediately for debugging with full row info
-                    if is_ems_code:
-                        status = row.get('STATUS CODE', '').strip()
-                        type_acft = row.get('TYPE AIRCRAFT', '').strip()
-                        type_eng = row.get('TYPE ENGINE', '').strip()
-                        print(f"  *** FOUND EMS CODE: {model_code} (N:{n_number or 'EMPTY'}) Status:{status} Type:{type_acft}/{type_eng} Owner:{owner_name[:40]} ***")
-                if len(sample_owners) < 200 and owner_name:
-                    sample_owners.append(owner_name[:50])
-                
                 if idx > 0 and idx % 10000 == 0:
-                    print(f"  Processed {idx} aircraft... (Found {len(ems_aircraft)} EMS, Excluded {excluded_count})")
+                    print(f"  Processed {idx} aircraft... (Found {len(police_aircraft)} police, Excluded {excluded_count})")
                 
                 # Check exclusions
                 should_exclude, exclude_reason = self.should_exclude(row)
                 if should_exclude:
                     excluded_count += 1
                     excluded_reasons[exclude_reason] = excluded_reasons.get(exclude_reason, 0) + 1
-                    # Track museum exclusions separately
                     if 'Museum' in exclude_reason:
                         museum_excluded_count += 1
                     # Track commercial exclusions separately
@@ -441,100 +361,89 @@ class EMSAircraftFilter:
                     # Track private LLC exclusions
                     if 'Private LLC' in exclude_reason:
                         private_llc_excluded_count += 1
-                    # Debug: If this is an EMS code that got excluded, note it
-                    if hasattr(self, 'ems_model_codes') and model_code in self.ems_model_codes:
-                        print(f"  *** EMS CODE EXCLUDED: {model_code} (N:{n_number or 'EMPTY'}) Reason: {exclude_reason} ***")
                     continue
                 
-                # Skip if no N-number
+                # Extract data
+                n_number = (row.get('N-NUMBER', '') or 
+                           (row.get(n_number_key, '') if n_number_key else '')).strip()
+                
                 if not n_number:
-                    # Debug: If this is an EMS code with no N-number, note it
-                    if hasattr(self, 'ems_model_codes') and model_code in self.ems_model_codes:
-                        print(f"  *** EMS CODE SKIPPED (no N-number): {model_code} -> {self.model_lookup.get(model_code, {}).get('model', 'N/A')} ***")
                     continue
                 
                 mode_s_hex = row.get('MODE S CODE HEX', '').strip()
                 status_code = row.get('STATUS CODE', '').strip()
                 
-                # Validate Mode S code format (must be exactly 6 hex characters)
+                # Validate Mode S code format
                 if mode_s_hex:
                     mode_s_hex_upper = mode_s_hex.upper().strip()
-                    # Validate: exactly 6 hex characters
-                    if not re.match(r'^[0-9A-F]{6}$', mode_s_hex_upper):
-                        # Invalid format - skip this aircraft
+                    if not self.is_valid_mode_s_hex(mode_s_hex_upper):
                         invalid_mode_s_count += 1
                         continue
                     mode_s_hex = mode_s_hex_upper
                 else:
-                    # No Mode S code - skip (needed for tracking)
                     invalid_mode_s_count += 1
                     continue
                 
                 match_reasons = []
-                model_match, model_name, manufacturer = self.matches_ems_model(model_code)
-                owner_match = self.matches_owner_keywords(owner_name)
+                model_code = row.get('MFR MDL CODE', '').strip()
+                owner_name = row.get('NAME', '').strip()
                 
-                # Debug: If we have an EMS code and it matches, print it
-                if model_match and hasattr(self, 'ems_model_codes') and model_code in self.ems_model_codes:
-                    print(f"  *** EMS CODE MATCHED: {model_code} (N:{n_number}) Model:{model_name} Owner:{owner_name[:40]} ***")
+                model_match, model_name, manufacturer = self.matches_police_model(model_code)
+                owner_match = self.matches_owner_keywords(owner_name)
                 
                 if model_match:
                     model_match_count += 1
                 if owner_match:
                     owner_match_count += 1
                 
-                # Check for special N-number patterns (CAL FIRE, federal agencies, etc.)
+                # Check for police-specific N-number patterns
                 n_number_pattern_match = False
                 n_number_upper = n_number.upper() if n_number else ""
                 
                 if n_number_upper:
-                    # CAL FIRE pattern: N-numbers ending in "DF" (e.g., N401DF, N402DF)
-                    if re.match(r'^N\d+DF$', n_number_upper):
+                    # Police Department pattern: N-numbers ending in "PD" (e.g., N123PD)
+                    if re.match(r'^N\d+PD$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (CAL FIRE)")
-                    # US Forest Service pattern: N-numbers ending in "FS" (e.g., N123FS)
-                    elif re.match(r'^N\d+FS$', n_number_upper):
+                        match_reasons.append("N-number pattern (Police Department)")
+                    # Sheriff's Office pattern: N-numbers ending in "SO" (e.g., N123SO)
+                    elif re.match(r'^N\d+SO$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (USFS)")
-                    # Bureau of Land Management pattern: N-numbers ending in "BL" (e.g., N123BL)
-                    elif re.match(r'^N\d+BL$', n_number_upper):
+                        match_reasons.append("N-number pattern (Sheriff's Office)")
+                    # State Police pattern: N-numbers ending in "SP" (e.g., N123SP)
+                    elif re.match(r'^N\d+SP$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (BLM)")
-                    # Department of Interior pattern: N-numbers ending in "DI" (e.g., N123DI)
-                    elif re.match(r'^N\d+DI$', n_number_upper):
+                        match_reasons.append("N-number pattern (State Police)")
+                    # Highway Patrol pattern: N-numbers ending in "HP" (e.g., N123HP)
+                    elif re.match(r'^N\d+HP$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (DOI)")
-                    # National Park Service pattern: N-numbers ending in "NP" (e.g., N123NP)
-                    elif re.match(r'^N\d+NP$', n_number_upper):
+                        match_reasons.append("N-number pattern (Highway Patrol)")
+                    # Law Enforcement pattern: N-numbers ending in "LE" (e.g., N123LE)
+                    elif re.match(r'^N\d+LE$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (NPS)")
-                    # Fire Department pattern: N-numbers ending in "FD" (e.g., N123FD)
-                    elif re.match(r'^N\d+FD$', n_number_upper):
+                        match_reasons.append("N-number pattern (Law Enforcement)")
+                    # State Patrol pattern: N-numbers ending in "ST" (e.g., N123ST)
+                    elif re.match(r'^N\d+ST$', n_number_upper):
                         n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (Fire Department)")
-                    # Emergency Medical pattern: N-numbers ending in "EM" or "MS" (e.g., N123EM, N123MS)
-                    elif re.match(r'^N\d+(EM|MS)$', n_number_upper):
-                        n_number_pattern_match = True
-                        match_reasons.append("N-number pattern (EMS)")
+                        match_reasons.append("N-number pattern (State)")
                 
                 if n_number_pattern_match:
                     n_pattern_match_count += 1
                 
-                # Determine if this is an EMS/Fire/Rescue aircraft
-                is_ems = False
+                # Determine if this is a police/law enforcement aircraft
+                is_police = False
                 
                 if model_match:
-                    is_ems = True
+                    is_police = True
                     match_reasons.append(f"Model: {model_name}")
                 
                 if owner_match:
-                    is_ems = True
+                    is_police = True
                     match_reasons.append("Owner name keyword")
                 
                 if n_number_pattern_match:
-                    is_ems = True
+                    is_police = True
                 
-                if is_ems:
+                if is_police:
                     # Determine confidence
                     # High: Model match + (owner match OR N-number pattern)
                     # Medium: Model match only, or N-number pattern + owner match
@@ -546,7 +455,7 @@ class EMSAircraftFilter:
                     else:
                         confidence = 'low'
                     
-                    aircraft = EMSAircraft(
+                    aircraft = PoliceAircraft(
                         n_number=n_number,
                         mode_s_hex=mode_s_hex,
                         model_code=model_code,
@@ -562,7 +471,7 @@ class EMSAircraftFilter:
                         status_code=status_code
                     )
                     
-                    ems_aircraft.append(aircraft)
+                    police_aircraft.append(aircraft)
         
         print(f"\nFiltering Statistics:")
         print(f"  Total processed: {idx + 1}")
@@ -575,88 +484,40 @@ class EMSAircraftFilter:
         print(f"  Owner keyword matches found: {owner_match_count}")
         print(f"  N-number pattern matches found: {n_pattern_match_count}")
         print(f"  Invalid/missing Mode S codes: {invalid_mode_s_count}")
-        print(f"  EMS aircraft found: {len(ems_aircraft)}")
-        
-        # Show first few rows for debugging
-        if first_few_rows:
-            print(f"\nFirst 5 rows from MASTER.txt:")
-            for i, r in enumerate(first_few_rows):
-                print(f"  Row {i+1}: N={r['n_number']}, Code={r['model_code']}, Status={r['status']}, Type={r['type_acft']}/{r['type_eng']}, Owner={r['owner']}")
+        print(f"  Police aircraft found: {len(police_aircraft)}")
         
         if excluded_reasons:
             print(f"\nExclusion reasons:")
             for reason, count in sorted(excluded_reasons.items(), key=lambda x: x[1], reverse=True)[:5]:
                 print(f"  {reason}: {count}")
         
-        if sample_models:
-            print(f"\nSample model codes from MASTER.txt (first 30):")
-            ems_found_in_samples = 0
-            in_lookup_count = 0
-            for code, in_lookup, is_ems, n_num in sample_models[:30]:
-                if in_lookup:
-                    in_lookup_count += 1
-                    model_info = self.model_lookup.get(code, {})
-                    ems_status = " [EMS CODE!]" if is_ems else ""
-                    if is_ems:
-                        ems_found_in_samples += 1
-                    print(f"  {code} (N:{n_num}) -> {model_info.get('model', 'N/A')} (in lookup{ems_status})")
-                else:
-                    print(f"  {code} (N:{n_num}) -> NOT in lookup")
-            print(f"\n  Summary: {in_lookup_count}/{len(sample_models)} in lookup, {ems_found_in_samples} EMS codes")
-        
-        # Show some sample owners with keywords
-        if sample_owners:
-            print(f"\nSample owner names (first 5):")
-            for owner in sample_owners[:5]:
-                print(f"  {owner}")
-        
-        print(f"Found {len(ems_aircraft)} EMS aircraft")
-        return ems_aircraft
+        return police_aircraft
     
-    def run(self) -> List[EMSAircraft]:
+    def run(self) -> List[PoliceAircraft]:
         """Run the complete filtering process."""
-        print("Loading EMS model patterns...")
-        self.load_ems_models()
-        
         print("Loading aircraft reference database...")
         self.load_aircraft_reference()
         
-        # Build set of EMS model codes by checking ALL entries in lookup
-        ems_in_lookup = 0
-        sample_ems_models = []
-        ems_model_codes = set()  # Track which codes are EMS models
-        
-        print("Scanning all model references for EMS patterns...")
+        # Build set of police model codes
+        police_model_codes = set()
+        print("Scanning all model references for police patterns...")
         for code, info in self.model_lookup.items():
             model_norm = info.get('model_normalized', '')
             model_name = info.get('model', '')
             
-            # Check if normalized model matches any EMS pattern
-            for pattern in self.ems_model_patterns:
-                # Use both prefix and substring matching
+            for pattern in self.police_model_patterns:
                 if (model_norm.startswith(pattern) or 
                     pattern in model_norm or
                     model_name.upper().startswith(pattern) or
                     pattern in model_name.upper()):
-                    ems_in_lookup += 1
-                    ems_model_codes.add(code)
-                    if len(sample_ems_models) < 10:
-                        sample_ems_models.append((code, model_name, pattern))
+                    police_model_codes.add(code)
                     break
         
-        self.ems_model_codes = ems_model_codes  # Store for use in filtering
-        print(f"Found {ems_in_lookup} potential EMS models in reference database")
-        print(f"Total unique EMS model codes: {len(ems_model_codes)}")
-        if sample_ems_models:
-            print("Sample EMS models in lookup:")
-            for code, model, pattern in sample_ems_models[:10]:
-                print(f"  Code {code}: {model} (matched pattern: {pattern})")
-        
-        # Debug: Check a few sample codes from ems_model_codes to see what they look like
-        print(f"\nSample EMS model codes (first 10): {list(ems_model_codes)[:10]}")
+        self.police_model_codes = police_model_codes
+        print(f"Found {len(police_model_codes)} potential police models in reference database")
         
         print("Filtering aircraft...")
-        ems_aircraft = self.filter_aircraft()
+        police_aircraft = self.filter_aircraft()
         
         # Print summary statistics
         confidence_counts = {}
@@ -664,10 +525,9 @@ class EMSAircraftFilter:
                             'model_owner': 0, 'model_pattern': 0, 'owner_pattern': 0,
                             'all_three': 0}
         
-        for aircraft in ems_aircraft:
+        for aircraft in police_aircraft:
             confidence_counts[aircraft.confidence] = confidence_counts.get(aircraft.confidence, 0) + 1
             
-            # Track match type combinations
             has_model = any('Model:' in reason for reason in aircraft.match_reasons)
             has_owner = any('Owner name keyword' in reason for reason in aircraft.match_reasons)
             has_pattern = any('N-number pattern' in reason for reason in aircraft.match_reasons)
@@ -688,7 +548,7 @@ class EMSAircraftFilter:
                 match_type_counts['pattern_only'] += 1
         
         print("\nFiltering Summary:")
-        print(f"  Total EMS aircraft found: {len(ems_aircraft)}")
+        print(f"  Total police aircraft found: {len(police_aircraft)}")
         print(f"\n  Confidence Distribution:")
         print(f"    High confidence: {confidence_counts.get('high', 0)}")
         print(f"    Medium confidence: {confidence_counts.get('medium', 0)}")
@@ -702,18 +562,41 @@ class EMSAircraftFilter:
         print(f"    Owner only: {match_type_counts['owner_only']}")
         print(f"    Pattern only: {match_type_counts['pattern_only']}")
         
-        return ems_aircraft
+        return police_aircraft
+
+
+def save_to_json(aircraft_list: List[PoliceAircraft], output_path: Path):
+    """Save filtered aircraft to JSON file."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    aircraft_dicts = [asdict(ac) for ac in aircraft_list]
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(aircraft_dicts, f, indent=2, ensure_ascii=False)
+    
+    print(f"\nSaved {len(aircraft_list)} police aircraft to {output_path}")
 
 
 def main():
     """Main entry point."""
+    import sys
+    
     # Get project root directory
     project_root = Path(__file__).parent.parent
     
-    filter_obj = EMSAircraftFilter(project_root)
-    ems_aircraft = filter_obj.run()
+    # Output file
+    output_file = project_root / "data" / "police_aircraft.json"
     
-    return ems_aircraft
+    filter_obj = PoliceAircraftFilter(project_root)
+    police_aircraft = filter_obj.run()
+    
+    # Save to JSON
+    save_to_json(police_aircraft, output_file)
+    
+    print(f"\n✓ Filtering complete! Found {len(police_aircraft)} police aircraft")
+    print(f"  Output saved to: {output_file}")
+    
+    return police_aircraft
 
 
 if __name__ == "__main__":
