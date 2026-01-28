@@ -20,7 +20,8 @@ from opensky_client import OpenSkyClient, load_ems_aircraft_db
 from monitor_state import StateTracker
 from anomaly_detector import AnomalyDetector
 from notifier import Notifier
-from region_selector import select_region
+from region_selector import select_region, select_region_or_state, filter_aircraft_by_states
+from regions import get_states_bbox
 from location_utils import get_broadcastify_url_simple
 
 
@@ -29,17 +30,23 @@ class MonitorService:
     
     def __init__(self, 
                  region: Optional[str] = None,
+                 states: Optional[List[str]] = None,
                  interval_seconds: int = 60,
                  credentials_file: Optional[Path] = None,
-                 database_type: str = 'ems'):
+                 database_type: str = 'ems',
+                 skip_interactive: bool = False):
         """
         Initialize monitoring service.
         
         Args:
             region: Region to monitor ('northeast', 'midwest', 'south', 'west', 'all')
+                   Mutually exclusive with states parameter
+            states: List of state codes to monitor (e.g., ['NJ'] or ['NJ', 'DE', 'PA'])
+                   Mutually exclusive with region parameter. Use empty list [] for "all US"
             interval_seconds: Polling interval in seconds
             credentials_file: Path to OpenSky credentials file
             database_type: Type of database to use ('ems' or 'police')
+            skip_interactive: If True, skip interactive selection even if both region and states are None
         """
         self.interval_seconds = interval_seconds
         self.project_root = Path(__file__).parent.parent
@@ -62,35 +69,96 @@ class MonitorService:
             )
         
         self.aircraft = load_ems_aircraft_db(db_path)  # Same function works for both
+        
+        # Keep ems_aircraft for backward compatibility (used in handle_anomalies)
+        self.ems_aircraft = self.aircraft
+        
+        # Select region or state
+        self.region = None
+        self.states = None
+        self.region_bbox = None
+        self.state_bbox = None
+        
+        # If both region and states are provided, states takes precedence
+        # Handle empty list as "all US" (explicitly no filtering)
+        if states is not None:
+            if len(states) == 0:
+                # Empty list means "all US" - no filtering
+                self.states = None
+                self.state_bbox = None
+                print("Monitoring all US (no regional filter)")
+            else:
+                # Validate state codes
+                from regions import is_valid_state_code
+                invalid_states = [s for s in states if not is_valid_state_code(s)]
+                if invalid_states:
+                    raise ValueError(f"Invalid state code(s): {', '.join(invalid_states)}")
+                self.states = [s.upper() for s in states]
+                self.state_bbox = get_states_bbox(self.states)
+                
+                # Filter aircraft by states
+                self.aircraft = filter_aircraft_by_states(self.aircraft, self.states)
+                
+                print(f"Monitoring states: {', '.join(self.states)}")
+                if self.state_bbox:
+                    print(f"  Bounding box: ({self.state_bbox[0]:.2f}, {self.state_bbox[1]:.2f}) to ({self.state_bbox[2]:.2f}, {self.state_bbox[3]:.2f})")
+        elif region:
+            from regions import get_region
+            self.region = get_region(region)
+            if not self.region:
+                raise ValueError(f"Invalid region: {region}")
+            
+            # Filter aircraft by region
+            from region_selector import filter_aircraft_by_region
+            self.aircraft = filter_aircraft_by_region(self.aircraft, self.region)
+            
+            print(f"Monitoring region: {self.region.display_name}")
+            print(f"  States: {', '.join(self.region.states)}")
+            self.region_bbox = self.region.bbox
+        elif skip_interactive:
+            # Skip interactive selection (GUI mode with "All US" selected)
+            self.states = None
+            self.region = None
+            self.state_bbox = None
+            self.region_bbox = None
+            print("Monitoring all US (no regional filter)")
+        else:
+            # Interactive selection (CLI mode)
+            selected_region, selected_states = select_region_or_state(self.project_root)
+            
+            if selected_states is not None:
+                self.states = selected_states
+                self.state_bbox = get_states_bbox(self.states)
+                
+                # Filter aircraft by states
+                self.aircraft = filter_aircraft_by_states(self.aircraft, self.states)
+                
+                print(f"Monitoring states: {', '.join(self.states)}")
+                if self.state_bbox:
+                    print(f"  Bounding box: ({self.state_bbox[0]:.2f}, {self.state_bbox[1]:.2f}) to ({self.state_bbox[2]:.2f}, {self.state_bbox[3]:.2f})")
+            elif selected_region:
+                self.region = selected_region
+                
+                # Filter aircraft by region
+                from region_selector import filter_aircraft_by_region
+                self.aircraft = filter_aircraft_by_region(self.aircraft, self.region)
+                
+                print(f"Monitoring region: {self.region.display_name}")
+                print(f"  States: {', '.join(self.region.states)}")
+                self.region_bbox = self.region.bbox
+            else:
+                print("Monitoring all US (no regional filter)")
+        
+        # Build mode_s_set from filtered aircraft
         self.mode_s_set = {
             ac['mode_s_hex'].upper().strip() 
             for ac in self.aircraft 
             if ac.get('mode_s_hex') and ac['mode_s_hex'].strip()
         }
-        
-        print(f"Loaded {len(self.aircraft)} {db_name} aircraft from database")
-        print(f"Found {len(self.mode_s_set)} aircraft with Mode S codes")
-        
-        # Keep ems_aircraft for backward compatibility (used in handle_anomalies)
-        self.ems_aircraft = self.aircraft
         self.ems_mode_s_set = self.mode_s_set
         
-        # Select region
-        if region:
-            from regions import get_region
-            self.region = get_region(region)
-            if not self.region:
-                raise ValueError(f"Invalid region: {region}")
-        else:
-            self.region = select_region(self.project_root)
-        
-        if self.region:
-            print(f"Monitoring region: {self.region.display_name}")
-            print(f"  States: {', '.join(self.region.states)}")
-            self.region_bbox = self.region.bbox
-        else:
-            print("Monitoring all US (no regional filter)")
-            self.region_bbox = None
+        print(f"Loaded {len(self.aircraft)} {db_name} aircraft from database (after filtering)")
+        print(f"Found {len(self.mode_s_set)} aircraft with Mode S codes")
         
         # Initialize OpenSky client
         if credentials_file and credentials_file.exists():
@@ -143,20 +211,32 @@ class MonitorService:
         
         self.poll_count = 0
         self.running = False
+        self.paused = False
+        self.current_states = {}
+        self.recent_anomalies = []
     
     def run_monitoring_loop(self):
         """Run the main monitoring loop."""
         self.running = True
+        self.paused = False
         print(f"\nStarting monitoring service (polling every {self.interval_seconds} seconds)")
         print("Press Ctrl+C to stop\n")
         
         try:
             while self.running:
+                # Check if paused
+                while self.paused and self.running:
+                    time.sleep(0.5)  # Small sleep to avoid busy waiting
+                
+                if not self.running:
+                    break
+                
                 self.poll_count += 1
                 
                 try:
                     # Poll aircraft states
                     current_states = self.poll_aircraft_states()
+                    self.current_states = current_states
                     
                     # Get previous states for comparison
                     previous_states = self.state_tracker.get_all_latest_states()
@@ -175,6 +255,13 @@ class MonitorService:
                         previous_states,
                         state_history
                     )
+                    
+                    # Store recent anomalies
+                    if anomalies:
+                        self.recent_anomalies.extend(anomalies)
+                        # Keep only last 100 anomalies
+                        if len(self.recent_anomalies) > 100:
+                            self.recent_anomalies = self.recent_anomalies[-100:]
                     
                     # Handle anomalies
                     if anomalies:
@@ -202,15 +289,34 @@ class MonitorService:
             print("\n\nStopping monitoring service...")
             self.running = False
     
+    def pause(self):
+        """Pause monitoring (can be resumed)."""
+        self.paused = True
+    
+    def resume(self):
+        """Resume paused monitoring."""
+        self.paused = False
+    
+    def get_current_states(self) -> Dict[str, Dict]:
+        """Get current aircraft states."""
+        return self.current_states.copy()
+    
+    def get_recent_anomalies(self, limit: int = 50) -> List[Dict]:
+        """Get recent anomalies."""
+        return self.recent_anomalies[-limit:] if self.recent_anomalies else []
+    
     def poll_aircraft_states(self) -> Dict[str, Dict]:
         """
-        Poll OpenSky API for active aircraft in region.
+        Poll OpenSky API for active aircraft in region or state(s).
         
         Returns:
             Dictionary mapping icao24 to state dictionary
         """
-        # Query all active aircraft in region (one API call)
-        response = self.client.get_states(icao24=None, bbox=self.region_bbox)
+        # Use state_bbox if in state mode, otherwise use region_bbox
+        bbox = self.state_bbox if self.states else self.region_bbox
+        
+        # Query all active aircraft in region/state (one API call)
+        response = self.client.get_states(icao24=None, bbox=bbox)
         all_states = response.get('states') if response else None
         
         if all_states is None:

@@ -26,25 +26,38 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with default settings (interactive region selection)
+  # Run with default settings (interactive region/state selection)
   python src/run_monitor.py
   
   # Monitor specific region
   python src/run_monitor.py --region west
   
+  # Monitor specific state
+  python src/run_monitor.py --state NJ
+  
+  # Monitor multiple states
+  python src/run_monitor.py --state NJ,DE,PA
+  
   # Custom polling interval
-  python src/run_monitor.py --region west --interval 30
+  python src/run_monitor.py --state NJ --interval 30
   
   # Use specific credentials file
-  python src/run_monitor.py --region west --credentials credentials.json
+  python src/run_monitor.py --state NJ --credentials credentials.json
         """
     )
     
-    parser.add_argument(
+    region_group = parser.add_mutually_exclusive_group()
+    region_group.add_argument(
         '--region',
         choices=['northeast', 'midwest', 'south', 'west', 'all'],
-        default=config.MONITOR_REGION,
-        help='Region to monitor (default: from config or interactive)'
+        default=None,
+        help='Region to monitor (mutually exclusive with --state)'
+    )
+    region_group.add_argument(
+        '--state',
+        type=str,
+        default=None,
+        help='State code(s) to monitor, comma-separated (e.g., "NJ" or "NJ,DE,PA"). Mutually exclusive with --region'
     )
     
     parser.add_argument(
@@ -104,10 +117,22 @@ Examples:
         if response.lower() != 'y':
             sys.exit(1)
     
+    # Parse state codes if provided
+    states = None
+    if args.state:
+        states = [s.strip().upper() for s in args.state.split(',')]
+        # Validate state codes
+        from regions import is_valid_state_code
+        invalid_states = [s for s in states if not is_valid_state_code(s)]
+        if invalid_states:
+            print(f"Error: Invalid state code(s): {', '.join(invalid_states)}", file=sys.stderr)
+            sys.exit(1)
+    
     try:
         # Create monitor service
         service = MonitorService(
-            region=args.region if args.region != 'all' else None,
+            region=args.region if args.region and args.region != 'all' else None,
+            states=states,
             interval_seconds=args.interval,
             credentials_file=args.credentials,
             database_type=args.database

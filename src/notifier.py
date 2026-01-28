@@ -44,13 +44,13 @@ class Notifier:
     
     def format_anomaly_message(self, anomaly: Dict) -> str:
         """
-        Format anomaly as human-readable message.
+        Format anomaly as human-readable message with boxed styling.
         
         Args:
             anomaly: Anomaly dictionary
-        
+            
         Returns:
-            Formatted message string
+            Formatted message string with boxes and brackets
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         icao24 = anomaly.get('icao24', 'UNKNOWN')
@@ -66,93 +66,150 @@ class Notifier:
             'LOW': 'ℹ️'
         }.get(severity, '•')
         
-        # Build message
-        lines = [
-            f"{severity_indicator} [{severity}] {timestamp}",
-            f"  Type: {anomaly_type}",
-            f"  Aircraft: {icao24}"
+        # Box drawing characters
+        top_left = '┌'
+        top_right = '┐'
+        bottom_left = '└'
+        bottom_right = '┘'
+        horizontal = '─'
+        vertical = '│'
+        
+        # Calculate box width (minimum 70, adjust based on content)
+        box_width = 70
+        
+        def make_box(title: str, content_lines: list) -> list:
+            """Create a boxed section with title and content."""
+            box_lines = []
+            # Top border with title
+            title_text = f" {title} "
+            padding = box_width - len(title_text) - 2
+            if padding < 0:
+                padding = 0
+            box_lines.append(top_left + title_text + horizontal * padding + top_right)
+            
+            # Content lines
+            for line in content_lines:
+                # Truncate if too long
+                if len(line) > box_width - 4:
+                    line = line[:box_width - 7] + "..."
+                padding = box_width - len(line) - 4
+                if padding < 0:
+                    padding = 0
+                box_lines.append(vertical + " " + line + " " * padding + " " + vertical)
+            
+            # Bottom border
+            box_lines.append(bottom_left + horizontal * (box_width - 2) + bottom_right)
+            return box_lines
+        
+        # Build main anomaly box content
+        main_content = [
+            f"{severity_indicator} [Severity] {severity}",
+            f"[Timestamp] {timestamp}",
+            f"[Type] {anomaly_type}",
+            f"[Aircraft] {icao24}"
         ]
         
-        # Add verbose aircraft information if available
+        # Add callsign if available
+        if details.get('callsign'):
+            main_content.append(f"[Callsign] {details['callsign']}")
+        
+        # Build aircraft info box if available
         aircraft_info = anomaly.get('aircraft_info')
+        aircraft_content = []
         if aircraft_info:
             n_number = aircraft_info.get('n_number', 'N/A')
-            lines.append(f"  N-Number: {n_number}")
+            aircraft_content.append(f"[N-Number] {n_number}")
             
             # Add FlightAware link if we have an N-number
             flightaware_url = aircraft_info.get('flightaware_url')
             if flightaware_url:
-                lines.append(f"  FlightAware: {flightaware_url}")
+                aircraft_content.append(f"[FlightAware] {flightaware_url}")
             
             # Add Broadcastify link for nearest county PD radio
             broadcastify_url = aircraft_info.get('broadcastify_url')
             if broadcastify_url:
-                lines.append(f"  Local PD Radio: {broadcastify_url}")
+                aircraft_content.append(f"[Local PD Radio] {broadcastify_url}")
             
-            lines.append(f"  Model: {aircraft_info.get('model_name', 'N/A')} ({aircraft_info.get('manufacturer', 'N/A')})")
+            model = aircraft_info.get('model_name', 'N/A')
+            manufacturer = aircraft_info.get('manufacturer', 'N/A')
+            aircraft_content.append(f"[Model] {model} ({manufacturer})")
+            
             owner_name = aircraft_info.get('owner_name', 'N/A')
-            if len(owner_name) > 50:
-                owner_name = owner_name[:47] + "..."
-            lines.append(f"  Owner: {owner_name}")
+            if len(owner_name) > 45:
+                owner_name = owner_name[:42] + "..."
+            aircraft_content.append(f"[Owner] {owner_name}")
+            
             owner_location = f"{aircraft_info.get('owner_city', '')}, {aircraft_info.get('owner_state', '')}".strip(', ')
             if owner_location:
-                lines.append(f"  Location: {owner_location}")
+                aircraft_content.append(f"[Location] {owner_location}")
         
-        # Add callsign if available (from current state, not aircraft_info)
-        if details.get('callsign'):
-            lines.append(f"  Callsign: {details['callsign']}")
-        
-        # Add type-specific details
+        # Build anomaly details box
+        details_content = []
         if anomaly_type == 'high_speed':
-            lines.append(f"  Speed: {details.get('velocity_knots', 'N/A')} knots (threshold: {details.get('threshold_knots', 'N/A')})")
+            details_content.append(f"[Speed] {details.get('velocity_knots', 'N/A')} knots")
+            details_content.append(f"[Threshold] {details.get('threshold_knots', 'N/A')} knots")
         
         elif anomaly_type == 'sudden_speed_increase':
-            lines.append(f"  Speed increase: {details.get('increase_percent', 'N/A')}%")
+            details_content.append(f"[Speed Increase] {details.get('increase_percent', 'N/A')}%")
             if details.get('baseline_velocity_knots'):
-                lines.append(f"  Baseline (avg): {details.get('baseline_velocity_knots', 'N/A')} knots")
+                details_content.append(f"[Baseline (avg)] {details.get('baseline_velocity_knots', 'N/A')} knots")
             else:
-                lines.append(f"  Previous: {details.get('previous_velocity_knots', 'N/A')} knots")
-            lines.append(f"  Current: {details.get('current_velocity_knots', 'N/A')} knots")
+                details_content.append(f"[Previous] {details.get('previous_velocity_knots', 'N/A')} knots")
+            details_content.append(f"[Current] {details.get('current_velocity_knots', 'N/A')} knots")
             if details.get('absolute_increase_knots'):
-                lines.append(f"  Absolute increase: {details.get('absolute_increase_knots', 'N/A')} knots")
+                details_content.append(f"[Absolute Increase] {details.get('absolute_increase_knots', 'N/A')} knots")
         
         elif anomaly_type == 'rapid_climb':
-            lines.append(f"  Climb rate: {details.get('vertical_rate_ft_min', 'N/A')} ft/min")
+            details_content.append(f"[Climb Rate] {details.get('vertical_rate_ft_min', 'N/A')} ft/min")
             if details.get('altitude_ft'):
-                lines.append(f"  Altitude: {details['altitude_ft']} ft")
+                details_content.append(f"[Altitude] {details['altitude_ft']} ft")
         
         elif anomaly_type == 'rapid_descent':
-            lines.append(f"  Altitude drop: {details.get('altitude_drop_ft', 'N/A')} ft")
-            lines.append(f"  Previous: {details.get('previous_altitude_ft', 'N/A')} ft")
-            lines.append(f"  Current: {details.get('current_altitude_ft', 'N/A')} ft")
+            details_content.append(f"[Altitude Drop] {details.get('altitude_drop_ft', 'N/A')} ft")
+            details_content.append(f"[Previous] {details.get('previous_altitude_ft', 'N/A')} ft")
+            details_content.append(f"[Current] {details.get('current_altitude_ft', 'N/A')} ft")
         
         elif anomaly_type.startswith('emergency_squawk'):
-            lines.append(f"  Squawk code: {details.get('squawk_code', 'N/A')}")
-            lines.append(f"  Type: {details.get('squawk_type', 'N/A')}")
+            details_content.append(f"[Squawk Code] {details.get('squawk_code', 'N/A')}")
+            details_content.append(f"[Type] {details.get('squawk_type', 'N/A')}")
         
         elif anomaly_type == 'multiple_launch':
-            lines.append(f"  Multiple aircraft launched: {details.get('aircraft_count', 'N/A')}")
-            lines.append(f"  Time span: {details.get('time_span_seconds', 'N/A')} seconds")
+            details_content.append(f"[Aircraft Count] {details.get('aircraft_count', 'N/A')}")
+            details_content.append(f"[Time Span] {details.get('time_span_seconds', 'N/A')} seconds")
             aircraft_list = details.get('aircraft', [])
             if aircraft_list:
-                lines.append("  Aircraft:")
+                details_content.append("[Aircraft List]")
                 for ac in aircraft_list[:5]:  # Limit to 5 for readability
                     callsign = ac.get('callsign', 'N/A')
-                    lines.append(f"    - {ac.get('icao24', 'N/A')} ({callsign})")
+                    details_content.append(f"  • {ac.get('icao24', 'N/A')} ({callsign})")
                 if len(aircraft_list) > 5:
-                    lines.append(f"    ... and {len(aircraft_list) - 5} more")
+                    details_content.append(f"  ... and {len(aircraft_list) - 5} more")
         
         elif anomaly_type == 'erratic_heading':
-            lines.append(f"  Large heading changes: {details.get('large_heading_changes', 'N/A')}")
-            lines.append(f"  Average change: {details.get('average_change', 'N/A')}°")
+            details_content.append(f"[Large Heading Changes] {details.get('large_heading_changes', 'N/A')}")
+            details_content.append(f"[Average Change] {details.get('average_change', 'N/A')}°")
         
         elif anomaly_type == 'hovering_high_altitude':
-            lines.append(f"  Average altitude: {details.get('average_altitude_ft', 'N/A')} ft")
-            lines.append(f"  Average speed: {details.get('average_velocity_knots', 'N/A')} knots")
+            details_content.append(f"[Average Altitude] {details.get('average_altitude_ft', 'N/A')} ft")
+            details_content.append(f"[Average Speed] {details.get('average_velocity_knots', 'N/A')} knots")
         
-        lines.append("")  # Blank line for readability
+        # Build final output
+        output_lines = []
         
-        return "\n".join(lines)
+        # Main anomaly box
+        output_lines.extend(make_box("ANOMALY DETECTED", main_content))
+        output_lines.append("")  # Blank line between boxes
+        
+        # Aircraft info box (if available)
+        if aircraft_content:
+            output_lines.extend(make_box("AIRCRAFT INFORMATION", aircraft_content))
+            output_lines.append("")  # Blank line between boxes
+        
+        # Anomaly details box (if available)
+        if details_content:
+            output_lines.extend(make_box("ANOMALY DETAILS", details_content))
+        
+        return "\n".join(output_lines)
     
     def _write_to_log(self, anomaly: Dict):
         """
@@ -184,4 +241,40 @@ class Notifier:
         """
         if self.console_output:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"\n[{timestamp}] Poll #{poll_count}: {active_aircraft} active aircraft, {anomalies_detected} anomalies detected")
+            
+            # Box drawing characters
+            top_left = '┌'
+            top_right = '┐'
+            bottom_left = '└'
+            bottom_right = '┘'
+            horizontal = '─'
+            vertical = '│'
+            box_width = 70
+            
+            # Build summary content
+            content = [
+                f"[Timestamp] {timestamp}",
+                f"[Poll Number] #{poll_count}",
+                f"[Active Aircraft] {active_aircraft}",
+                f"[Anomalies Detected] {anomalies_detected}"
+            ]
+            
+            # Create box
+            lines = []
+            title = " MONITORING SUMMARY "
+            padding = box_width - len(title) - 2
+            if padding < 0:
+                padding = 0
+            lines.append(top_left + title + horizontal * padding + top_right)
+            
+            for line in content:
+                if len(line) > box_width - 4:
+                    line = line[:box_width - 7] + "..."
+                padding = box_width - len(line) - 4
+                if padding < 0:
+                    padding = 0
+                lines.append(vertical + " " + line + " " * padding + " " + vertical)
+            
+            lines.append(bottom_left + horizontal * (box_width - 2) + bottom_right)
+            
+            print("\n" + "\n".join(lines) + "\n")

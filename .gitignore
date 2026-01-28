@@ -20,6 +20,13 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.dmypy.json
+dmypy.json
 
 # Virtual Environment
 venv/
@@ -27,6 +34,10 @@ env/
 ENV/
 env.bak/
 venv.bak/
+.venv/
+virtualenv/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # IDE
 .vscode/
@@ -35,6 +46,9 @@ venv.bak/
 *.swo
 *~
 .DS_Store
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
 
 # Environment variables and credentials
 .env
@@ -43,34 +57,78 @@ venv.bak/
 credentials.json
 *.key
 *.pem
+*.secret
+*.token
+config.local.py
 
 # Generated databases and data files
 data/*.json
 data/*.csv
 data/*.db
+data/*.sqlite
+data/*.sqlite3
 data/cache/
 data/anomalies.jsonl
 data/monitor_state.db
+data/ems_aircraft.*
+data/police_aircraft.*
 
 # Keep data directory structure
 !data/.gitkeep
 
 # FAA database files (large, user should download separately)
-# Uncomment if you want to exclude these:
 ReleasableAircraft/
+MASTER.txt
+ACFTREF.txt
 
 # Test files (not included in repository)
 test_*.py
+*_test.py
+tests/__pycache__/
 
 # Logs
 *.log
 logs/
+*.log.*
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
 
 # Temporary files
 *.tmp
 *.bak
 *.swp
+*.swo
+*~
+.cache/
+
+# Compiled files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Package files
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+
+# Application specific
+*.pyc
+*.pyo
+*.pyd
+.Python

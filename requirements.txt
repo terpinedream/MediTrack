@@ -11,5 +11,8 @@ urllib3>=2.0.0
 # Environment variables
 python-dotenv>=1.0.0
 
+# GUI
+PyQt6>=6.6.0
+
 # Note: OpenSky API is accessed via REST, no official library required
 # The opensky-client uses requests directly
