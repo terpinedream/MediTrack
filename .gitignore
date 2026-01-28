@@ -57,7 +57,7 @@ data/monitor_state.db
 
 # FAA database files (large, user should download separately)
 # Uncomment if you want to exclude these:
-# ReleasableAircraft/
+ReleasableAircraft/
 
 # Test files
 test_oauth2.py
