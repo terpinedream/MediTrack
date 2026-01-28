@@ -59,9 +59,8 @@ data/monitor_state.db
 # Uncomment if you want to exclude these:
 ReleasableAircraft/
 
-# Test files
-test_oauth2.py
-test_imports.py
+# Test files (not included in repository)
+test_*.py
 
 # Logs
 *.log
