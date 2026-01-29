@@ -472,6 +472,14 @@ class EMSAircraftFilter:
                 
                 match_reasons = []
                 model_match, model_name, manufacturer = self.matches_ems_model(model_code)
+                
+                # If model code exists in lookup but wasn't matched as EMS model,
+                # still get the model name and manufacturer for database
+                if not model_name and model_code and model_code in self.model_lookup:
+                    model_info = self.model_lookup[model_code]
+                    model_name = model_info.get('model', '')
+                    manufacturer = model_info.get('manufacturer', '')
+                
                 owner_match = self.matches_owner_keywords(owner_name)
                 
                 # Debug: If we have an EMS code and it matches, print it

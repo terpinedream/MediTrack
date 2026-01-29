@@ -5,16 +5,32 @@ Worker thread for running MonitorService in background.
 from PyQt6.QtCore import QThread, pyqtSignal
 from typing import Dict, List
 from pathlib import Path
+from datetime import datetime
 import sys
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-if str(Path(__file__).parent.parent.parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+src_path = Path(__file__).parent.parent.parent  # src directory
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
 
 from monitor_service import MonitorService
+
+try:
+    from gui.model_lookup import ModelLookup
+except ImportError:
+    # Fallback if import fails - create a dummy class
+    class ModelLookup:
+        def __init__(self, *args, **kwargs):
+            pass
+        def lookup(self, model_code):
+            return None
+        def get_model_name(self, model_code):
+            return None
+        def get_manufacturer(self, model_code):
+            return None
 
 
 class MonitorWorker(QThread):
@@ -51,6 +67,8 @@ class MonitorWorker(QThread):
         self.database_type = database_type
         self.monitor_service = None
         self._should_pause = False
+        # Initialize model lookup for runtime model name resolution
+        self.model_lookup = ModelLookup()
     
     def run(self):
         """Run the monitoring service in this thread."""
@@ -162,10 +180,30 @@ class MonitorWorker(QThread):
                                     except Exception:
                                         pass
                                     
+                                    # Get model info, treating "Unknown" as empty
+                                    model_name = aircraft_info.get('model_name', 'N/A')
+                                    manufacturer = aircraft_info.get('manufacturer', 'N/A')
+                                    model_code = aircraft_info.get('model_code', '')
+                                    
+                                    if model_name and model_name.upper().strip() == 'UNKNOWN':
+                                        model_name = ''
+                                    if manufacturer and manufacturer.upper().strip() == 'UNKNOWN':
+                                        manufacturer = ''
+                                    
+                                    # If model name is missing, try model lookup from ACFTREF
+                                    if not model_name and model_code:
+                                        model_info = self.model_lookup.lookup(model_code)
+                                        if model_info:
+                                            model_name = model_info.get('model', '')
+                                            if not manufacturer:
+                                                manufacturer = model_info.get('manufacturer', '')
+                                    
                                     anomaly['aircraft_info'] = {
                                         'n_number': n_number,
-                                        'model_name': aircraft_info.get('model_name', 'N/A'),
-                                        'manufacturer': aircraft_info.get('manufacturer', 'N/A'),
+                                        'model_name': model_name if model_name else 'N/A',
+                                        'manufacturer': manufacturer if manufacturer else 'N/A',
+                                        'type_aircraft': aircraft_info.get('type_aircraft', ''),
+                                        'model_code': model_code,
                                         'owner_name': aircraft_info.get('owner_name', 'N/A'),
                                         'owner_city': aircraft_info.get('owner_city', 'N/A'),
                                         'owner_state': aircraft_info.get('owner_state', 'N/A'),
@@ -185,14 +223,18 @@ class MonitorWorker(QThread):
                             if self.monitor_service.notifier.log_file:
                                 self.monitor_service.notifier._write_to_log(anomaly)
                             
+                            # Time of detection for UI display
+                            anomaly['detected_at'] = datetime.utcnow().isoformat() + 'Z'
                             # Emit anomaly signal
                             self.anomaly_detected.emit(anomaly)
                     
-                    # Emit summary
+                    # Emit summary (always emit, even if no aircraft or anomalies)
+                    active_count = len(current_states) if current_states else 0
+                    anomaly_count = len(anomalies) if anomalies else 0
                     self.summary_updated.emit(
                         self.monitor_service.poll_count,
-                        len(current_states),
-                        len(anomalies)
+                        active_count,
+                        anomaly_count
                     )
                     
                 except Exception as e:

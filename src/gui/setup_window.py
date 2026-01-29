@@ -6,9 +6,15 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBo
                              QSpinBox, QPushButton, QLineEdit, QFileDialog, QRadioButton,
                              QButtonGroup, QMessageBox, QGroupBox)
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from pathlib import Path
 from typing import Optional, List
 from regions import is_valid_state_code, get_all_state_codes
+from gui.theme import COLORS, SPACING, FONT_SIZES, get_button_style
+
+# Project root for assets (setup_window.py is in src/gui/)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+LOGO_PATH = _PROJECT_ROOT / "assets" / "logo.png"
 
 
 class SetupWindow(QDialog):
@@ -26,12 +32,23 @@ class SetupWindow(QDialog):
         self.setMinimumSize(500, 400)
         
         layout = QVBoxLayout()
-        layout.setSpacing(15)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(SPACING['lg'])
+        layout.setContentsMargins(SPACING['xl'], SPACING['xl'], SPACING['xl'], SPACING['xl'])
+        
+        # Logo (top center)
+        logo_label = QLabel()
+        if LOGO_PATH.exists():
+            pixmap = QPixmap(str(LOGO_PATH))
+            if not pixmap.isNull():
+                pixmap = pixmap.scaledToWidth(200, Qt.TransformationMode.SmoothTransformation)
+                logo_label.setPixmap(pixmap)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        logo_label.setStyleSheet("background: transparent;")
+        layout.addWidget(logo_label)
         
         # Title
         title = QLabel("Monitoring Configuration")
-        title.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title.setStyleSheet(f"font-size: {FONT_SIZES['lg']}px; font-weight: 600; color: {COLORS['text_primary']};")
         layout.addWidget(title)
         
         # Database type
@@ -113,20 +130,7 @@ class SetupWindow(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
         self.start_button = QPushButton("Start Monitoring")
-        self.start_button.setStyleSheet("""
-            QPushButton {
-                background-color: #4caf50;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
+        self.start_button.setStyleSheet(get_button_style('success'))
         self.start_button.clicked.connect(self._on_start_clicked)
         button_layout.addStretch()
         button_layout.addWidget(self.start_button)
