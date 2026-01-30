@@ -87,4 +87,4 @@ Use in line with OpenSky API terms and FAA data policies. Please be aware this p
 
 ---
 
-**Special thanks to** the OpenSky Network, FAA Public Flight Registry, and Lindsay Blanton from Broadcastify for providing the list of country codes.
+**Special thanks to** the OpenSky Network, FAA Public Flight Registry, and Lindsay Blanton from Broadcastify for providing the list of county codes.
