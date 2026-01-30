@@ -193,6 +193,18 @@ class Notifier:
             details_content.append(f"[Average Altitude] {details.get('average_altitude_ft', 'N/A')} ft")
             details_content.append(f"[Average Speed] {details.get('average_velocity_knots', 'N/A')} knots")
         
+        # Hospital proximity (geo context)
+        if 'distance_hospital_km' in details:
+            dist = details.get('distance_hospital_km')
+            near = details.get('near_hospital', False)
+            name = details.get('hospital_name', '')
+            if near and name:
+                details_content.append(f"[Hospital] Within {dist} km of {name}")
+            elif near:
+                details_content.append(f"[Hospital] Within {dist} km of hospital")
+            else:
+                details_content.append(f"[Hospital] Nearest hospital {dist} km away")
+        
         # Build final output
         output_lines = []
         

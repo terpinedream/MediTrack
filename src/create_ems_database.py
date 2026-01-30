@@ -60,6 +60,22 @@ class EMSDatabaseGenerator:
         
         print(f"Saved JSON database: {output_file} ({len(aircraft_list)} aircraft)")
     
+    def save_json_to_path(self, aircraft_list: List[EMSAircraft], file_path: Path) -> None:
+        """Save aircraft data to a specific JSON file path (for custom database builds)."""
+        file_path = Path(file_path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            'metadata': {
+                'generated_at': datetime.now().isoformat(),
+                'total_aircraft': len(aircraft_list),
+                'description': 'Filtered EMS/Emergency Medical Service aircraft from FAA database'
+            },
+            'aircraft': [self.to_dict(ac) for ac in aircraft_list]
+        }
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"Saved JSON database: {file_path} ({len(aircraft_list)} aircraft)")
+    
     def save_csv(self, aircraft_list: List[EMSAircraft]) -> None:
         """Save aircraft data to CSV file."""
         output_file = self.output_dir / "ems_aircraft.csv"

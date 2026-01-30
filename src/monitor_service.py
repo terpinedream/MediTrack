@@ -20,6 +20,7 @@ from opensky_client import OpenSkyClient, load_ems_aircraft_db
 from monitor_state import StateTracker
 from anomaly_detector import AnomalyDetector
 from notifier import Notifier
+from geo_context import GeoContext
 from region_selector import select_region, select_region_or_state, filter_aircraft_by_states
 from regions import get_states_bbox
 from location_utils import get_broadcastify_url_simple
@@ -37,7 +38,7 @@ class MonitorService:
                  skip_interactive: bool = False):
         """
         Initialize monitoring service.
-        
+
         Args:
             region: Region to monitor ('northeast', 'midwest', 'south', 'west', 'all')
                    Mutually exclusive with states parameter
@@ -208,6 +209,9 @@ class MonitorService:
             log_file=config.ANOMALY_LOG_FILE,
             console_output=True
         )
+        
+        # Geographic context for airport/hospital proximity (suppress false positives, enrich)
+        self.geo_context = GeoContext(config.AIRPORTS_CSV, config.HOSPITALS_CSV)
         
         self.poll_count = 0
         self.running = False
@@ -383,6 +387,41 @@ class MonitorService:
             previous_states,
             state_history
         )
+        
+        # Geo filter: suppress rapid_descent when near airport and descending (likely landing)
+        filtered = []
+        for anomaly in anomalies:
+            if anomaly.get("type") == "rapid_descent":
+                icao24 = anomaly.get("icao24")
+                state = current_states.get(icao24) if icao24 else None
+                if state:
+                    lat = state.get("latitude")
+                    lon = state.get("longitude")
+                    vr = state.get("vertical_rate")
+                    if lat is not None and lon is not None and vr is not None and vr < 0:
+                        if self.geo_context.is_near_airport(lat, lon, config.GEO_NEAR_AIRPORT_KM):
+                            continue  # suppress
+            filtered.append(anomaly)
+        anomalies = filtered
+        
+        # Enrich with hospital proximity
+        for anomaly in anomalies:
+            icao24 = anomaly.get("icao24")
+            if not icao24:
+                continue
+            state = current_states.get(icao24)
+            if not state:
+                continue
+            lat = state.get("latitude")
+            lon = state.get("longitude")
+            if lat is None or lon is None:
+                continue
+            dist_km, hospital_name = self.geo_context.distance_to_nearest_hospital(lat, lon)
+            details = anomaly.setdefault("details", {})
+            details["distance_hospital_km"] = round(dist_km, 1)
+            details["near_hospital"] = dist_km <= config.GEO_NEAR_HOSPITAL_KM
+            if hospital_name is not None:
+                details["hospital_name"] = hospital_name
         
         return anomalies
     

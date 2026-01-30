@@ -20,6 +20,7 @@ from gui.widgets.monitoring_controls import MonitoringControls
 from gui.widgets.aircraft_detail_dialog import AircraftDetailDialog
 from gui.workers.monitor_worker import MonitorWorker
 from gui.setup_window import SetupWindow
+from gui.setup_data_dialog import SetupDataDialog
 from gui.theme import COLORS, SPACING, FONT_SIZES, RADIUS, get_button_style
 from gui.model_lookup import ModelLookup
 
@@ -117,6 +118,23 @@ class MonitoringWindow(QMainWindow):
         self.settings_button.setStyleSheet(settings_style)
         self.settings_button.clicked.connect(self.open_settings)
         left_layout.addWidget(self.settings_button)
+        
+        # Setup data button (FAA download + build EMS/Police databases)
+        self.setup_data_button = QPushButton("Setup data")
+        setup_data_style = get_button_style('primary')
+        setup_data_style += f"""
+            QPushButton {{
+                border-top: none;
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
+                border-bottom-left-radius: {RADIUS['md']}px;
+                border-bottom-right-radius: {RADIUS['md']}px;
+                margin-top: 0px;
+            }}
+        """
+        self.setup_data_button.setStyleSheet(setup_data_style)
+        self.setup_data_button.clicked.connect(self.open_setup_data)
+        left_layout.addWidget(self.setup_data_button)
         
         left_layout.addStretch()
         
@@ -274,6 +292,31 @@ class MonitoringWindow(QMainWindow):
             # Restart if was running
             if was_running:
                 self.start_monitoring()
+    
+    def open_setup_data(self):
+        """Open setup data dialog (FAA download + build EMS & Police databases)."""
+        dialog = SetupDataDialog(self)
+        dialog.databases_built.connect(self._on_databases_built)
+        dialog.exec()
+    
+    def _on_databases_built(self):
+        """Refresh aircraft list and monitoring info after databases were built."""
+        self.load_aircraft_database()
+        total_aircraft = len(self.aircraft_db) if self.aircraft_db else 0
+        self.monitoring_info.set_config(
+            region=self.config.get('region'),
+            states=self.config.get('states'),
+            database_type=self.config.get('database_type'),
+            total_aircraft=total_aircraft
+        )
+    
+    def _maybe_show_initial_setup(self):
+        """If neither EMS nor Police database exists, open setup data dialog once."""
+        import config
+        if not config.EMS_DB_JSON.exists() and not config.POLICE_DB_JSON.exists():
+            dialog = SetupDataDialog(self)
+            dialog.databases_built.connect(self._on_databases_built)
+            dialog.exec()
     
     def _on_aircraft_updated(self, aircraft_states: Dict):
         """Handle aircraft update signal (throttled to prevent freezing)."""

@@ -1,0 +1,7 @@
+❯ python src/run_gui.py 
+Traceback (most recent call last):
+  File "/home/bust3r/Documents/MediTrack/src/gui/build_database_dialog.py", line 216, in _on_run
+    self.worker = BuildDatabaseWorker(effective_dir, output_path, db_type)
+                                      ^^^^^^^^^^^^^
+NameError: name 'effective_dir' is not defined
+Aborted                    (core dumped) python src/run_gui.py

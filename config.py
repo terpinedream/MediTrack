@@ -66,3 +66,9 @@ ANOMALY_RAPID_DESCENT_WINDOW_SECONDS = int(os.getenv("ANOMALY_RAPID_DESCENT_WIND
 # Anomaly logging
 ANOMALY_LOG_FILE = Path(DATA_DIR) / os.getenv("ANOMALY_LOG_FILE", "anomalies.jsonl")
 MONITOR_STATE_DB = Path(DATA_DIR) / os.getenv("MONITOR_STATE_DB", "monitor_state.db")
+
+# Geographic context (airports, hospitals) for anomaly suppression and enrichment
+AIRPORTS_CSV = PROJECT_ROOT / os.getenv("AIRPORTS_CSV", "us-airports.csv")
+HOSPITALS_CSV = PROJECT_ROOT / os.getenv("HOSPITALS_CSV", "Hospitals.csv")
+GEO_NEAR_AIRPORT_KM = float(os.getenv("GEO_NEAR_AIRPORT_KM", "10"))
+GEO_NEAR_HOSPITAL_KM = float(os.getenv("GEO_NEAR_HOSPITAL_KM", "10"))
