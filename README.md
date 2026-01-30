@@ -67,8 +67,8 @@ Place **us-airports.csv** (OurAirports) and **Hospitals.csv** in the project roo
 
 ## License
 
-Use in line with OpenSky API terms and FAA data policies.
+Use in line with OpenSky API terms and FAA data policies. Please be aware this program can produce false positives for both anomalies and flagged aircrafts.  
 
 ---
 
-**Special thanks to** the OpenSky Network and the FAA for public data. *(Add anyone else you want to thank here.)*
+**Special thanks to** the OpenSky Network, FAA Public Flight Registry, and Lindsay Blanton from Broadcastify for providing the list of country codes.
