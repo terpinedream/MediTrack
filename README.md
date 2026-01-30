@@ -1,5 +1,9 @@
 # MediTrack
 
+<p align="center">
+  <img src="assets/logo.png" alt="MediTrack logo" width="200">
+</p>
+
 Track and monitor EMS and Police/Law Enforcement aircraft in the US using the [OpenSky Network](https://opensky-network.org) API. Identifies aircraft from the FAA registry and flags unusual flight patterns (speed, altitude, squawks, multi-launch).
 
 ## Features
@@ -8,6 +12,18 @@ Track and monitor EMS and Police/Law Enforcement aircraft in the US using the [O
 - **Anomaly detection**: High speed, rapid climb/descent, emergency squawks, erratic heading, multiple launches.
 - **Geo context**: Suppresses false positives near airports (e.g. landings); enriches alerts with hospital proximity.
 - **Regional**: Monitor by US region or state(s). GUI and CLI.
+
+## Screenshots
+
+<p align="center">
+  <img src="screenshots/screenshot_20260130_124950.jpg" alt="MediTrack monitoring dashboard" width="700">
+</p>
+<p align="center"><em>Monitoring dashboard — active aircraft, anomalies, and controls</em></p>
+
+<p align="center">
+  <img src="screenshots/screenshot_20260130_125019.jpg" alt="MediTrack setup data" width="700">
+</p>
+<p align="center"><em>Setup data — FAA download and build EMS & Police databases</em></p>
 
 ## Quick start
 
