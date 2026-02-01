@@ -5,7 +5,7 @@ Aircraft data table widget.
 from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QStyledItemDelegate
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QClipboard, QBrush, QColor, QPainter
-from typing import Dict, Optional, Set
+from typing import Dict, List, Optional, Set
 import webbrowser
 import sys
 from pathlib import Path
@@ -435,6 +435,20 @@ class AircraftTable(QTableWidget):
     def get_aircraft_info(self, icao24: str) -> Optional[Dict]:
         """Get aircraft database info for given ICAO24."""
         return self.aircraft_data.get(icao24)
+    
+    def get_export_rows(self) -> List[Dict[str, str]]:
+        """Return current table rows as list of dicts (header -> cell text) for export."""
+        headers = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
+        rows = []
+        for row in range(self.rowCount()):
+            row_data = {}
+            for col, h in enumerate(headers):
+                if col >= self.columnCount():
+                    break
+                item = self.item(row, col)
+                row_data[h] = item.text() if item else ""
+            rows.append(row_data)
+        return rows
     
     def mousePressEvent(self, event):
         """Handle mouse clicks on location cells to copy coordinates."""

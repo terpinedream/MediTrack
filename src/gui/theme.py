@@ -182,6 +182,33 @@ def get_global_stylesheet() -> str:
         QRadioButton {{
             spacing: {SPACING['sm']}px;
         }}
+        
+        /* Menu bar */
+        QMenuBar {{
+            background-color: {COLORS['bg_main']};
+            color: {COLORS['text_primary']};
+        }}
+        QMenuBar::item {{
+            padding: {SPACING['sm']}px {SPACING['md']}px;
+        }}
+        QMenuBar::item:selected {{
+            background-color: {COLORS['bg_hover']};
+        }}
+        QMenuBar::item:pressed {{
+            background-color: {COLORS['border']};
+        }}
+        
+        /* Dropdown menus */
+        QMenu {{
+            background-color: {COLORS['bg_main']};
+            border: 1px solid {COLORS['border']};
+        }}
+        QMenu::item {{
+            padding: {SPACING['sm']}px {SPACING['lg']}px;
+        }}
+        QMenu::item:selected {{
+            background-color: {COLORS['selection_bg']};
+        }}
     """
 
 

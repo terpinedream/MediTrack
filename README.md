@@ -16,14 +16,14 @@ Track and monitor EMS and Police/Law Enforcement aircraft in the US using the [O
 ## Screenshots
 
 <p align="center">
-  <img src="screenshots/screenshot_20260130_124950.jpg" alt="MediTrack monitoring dashboard" width="700">
+  <img src="screenshots/dashboard.png" alt="MediTrack monitoring dashboard" width="700">
 </p>
 <p align="center"><em>Monitoring dashboard — active aircraft, anomalies, and controls</em></p>
 
 <p align="center">
-  <img src="screenshots/screenshot_20260130_125019.jpg" alt="MediTrack setup data" width="700">
+  <img src="screenshots/flight.png" alt="MediTrack flight data" width="700">
 </p>
-<p align="center"><em>Setup data — FAA download and build EMS & Police databases</em></p>
+<p align="center"><em>Example anomaly data</em></p>
 
 ## Quick start
 
