@@ -8,6 +8,15 @@ from pathlib import Path
 from PyQt6.QtCore import QObject, pyqtSignal
 
 
+def _confidence_summary(aircraft_list) -> str:
+    """Build a short confidence distribution string."""
+    counts = {'high': 0, 'medium': 0, 'low': 0}
+    for ac in aircraft_list:
+        conf = getattr(ac, 'confidence', None) or ac.get('confidence', 'low')
+        counts[conf] = counts.get(conf, 0) + 1
+    return (f"high={counts['high']}, medium={counts['medium']}, low={counts['low']}")
+
+
 class SetupDataWorker(QObject):
     """Builds EMS then Police databases; emits progress and finished signals."""
 
@@ -25,7 +34,6 @@ class SetupDataWorker(QObject):
         """Run EMS then Police build in this thread. Emit progress and finished."""
         try:
             self.progress_percent.emit(0)
-            # Ensure imports can find project modules
             if str(self.project_root) not in sys.path:
                 sys.path.insert(0, str(self.project_root))
             src_path = self.project_root / "src"
@@ -39,7 +47,8 @@ class SetupDataWorker(QObject):
 
             filter_ems = EMSAircraftFilter(self.project_root)
             ems_aircraft = filter_ems.run()
-            self.progress.emit(f"EMS: {len(ems_aircraft)} aircraft")
+            ems_summary = _confidence_summary(ems_aircraft)
+            self.progress.emit(f"EMS: {len(ems_aircraft)} aircraft ({ems_summary})")
 
             generator = EMSDatabaseGenerator(self.project_root, self.data_dir)
             generator.generate(ems_aircraft)
@@ -52,7 +61,8 @@ class SetupDataWorker(QObject):
 
             filter_police = PoliceAircraftFilter(self.project_root)
             police_aircraft = filter_police.run()
-            self.progress.emit(f"Police: {len(police_aircraft)} aircraft")
+            police_summary = _confidence_summary(police_aircraft)
+            self.progress.emit(f"Police: {len(police_aircraft)} aircraft ({police_summary})")
 
             police_json = self.data_dir / "police_aircraft.json"
             save_to_json(police_aircraft, police_json)

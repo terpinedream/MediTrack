@@ -64,6 +64,7 @@ Better rate limits with an account. Create [OpenSky account](https://opensky-net
 Key settings in `config.py` or `.env`:
 
 - **Anomaly**: `ANOMALY_SPEED_THRESHOLD_KNOTS`, `ANOMALY_RAPID_DESCENT_FT`, etc.
+- **Filtering**: `MIN_CONFIDENCE_LEVEL` (`low`, `medium`, `high`; default `medium`), `EXCLUDE_INDIVIDUAL_OWNERS`
 - **Geo**: `GEO_NEAR_AIRPORT_KM`, `GEO_NEAR_HOSPITAL_KM` (default 10).
 - **Paths**: `AIRPORTS_CSV`, `HOSPITALS_CSV` (default: `us-airports.csv`, `Hospitals.csv` in project root).
 
@@ -71,10 +72,11 @@ Place **us-airports.csv** (OurAirports) and **Hospitals.csv** in the project roo
 
 ## Project layout
 
-- `data/` — Generated DBs (`ems_aircraft.json`, `police_aircraft.json`, etc.), cache, logs.
+- `data/` — Generated DBs (`ems_aircraft.json`, `police_aircraft.json`, etc.), filter config, cache, logs.
+- `data/ems_models.txt`, `data/ems_owner_keywords.txt` — EMS filter patterns (see also police equivalents).
 - `ReleasableAircraft/` — FAA files (`MASTER.txt`, `ACFTREF.txt`) after you extract the ZIP.
 - `src/` — Filters, `create_ems_database.py`, OpenSky client, monitor, anomaly detector, GUI.
-- `mediModels.txt` — EMS model list used by the EMS filter.
+- `mediModels.txt` — Deprecated; filter data now lives in `data/` files.
 
 ## Data sources
 

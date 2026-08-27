@@ -4,25 +4,29 @@ Geographic context for anomaly detection: airports and hospitals.
 Loads US airports (OurAirports CSV) and hospitals CSV; provides distance
 and "within radius" queries for suppressing false positives (e.g. landing
 near airport) and enriching anomalies with hospital proximity.
+
+Uses a simple lat/lon grid index for faster nearest-neighbor queries.
 """
 
 import csv
 import math
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-# Lazy-loaded data; None until first use
+# Lazy-loaded module-level data
 _airports: Optional[List[Tuple[float, float, str]]] = None
 _hospitals: Optional[List[Tuple[float, float, str]]] = None
-_airports_path: Optional[Path] = None
-_hospitals_path: Optional[Path] = None
+_airports_grid: Optional[Dict[Tuple[int, int], List[int]]] = None
+_hospitals_grid: Optional[Dict[Tuple[int, int], List[int]]] = None
 _load_warned_airports: bool = False
 _load_warned_hospitals: bool = False
+
+GRID_SIZE = 1.0  # degrees per grid cell
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return great-circle distance in km between (lat1, lon1) and (lat2, lon2)."""
-    R = 6371.0  # Earth radius in km
+    R = 6371.0
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
@@ -30,6 +34,56 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
+
+
+def _grid_key(lat: float, lon: float) -> Tuple[int, int]:
+    return (int(math.floor(lat / GRID_SIZE)), int(math.floor(lon / GRID_SIZE)))
+
+
+def _build_grid(points: List[Tuple[float, float, str]]) -> Dict[Tuple[int, int], List[int]]:
+    """Build spatial grid index mapping cell -> point indices."""
+    grid: Dict[Tuple[int, int], List[int]] = {}
+    for idx, (lat, lon, _) in enumerate(points):
+        key = _grid_key(lat, lon)
+        grid.setdefault(key, []).append(idx)
+    return grid
+
+
+def _nearest_in_points(
+    lat: float,
+    lon: float,
+    points: List[Tuple[float, float, str]],
+    grid: Dict[Tuple[int, int], List[int]],
+    search_radius_cells: int = 2,
+) -> Tuple[float, Optional[str]]:
+    """Find nearest point using grid index, falling back to full scan if needed."""
+    best_km = float("inf")
+    best_name: Optional[str] = None
+
+    base_key = _grid_key(lat, lon)
+    checked: set = set()
+
+    for dlat in range(-search_radius_cells, search_radius_cells + 1):
+        for dlon in range(-search_radius_cells, search_radius_cells + 1):
+            cell = (base_key[0] + dlat, base_key[1] + dlon)
+            if cell in checked:
+                continue
+            checked.add(cell)
+            for idx in grid.get(cell, []):
+                plat, plon, name = points[idx]
+                d = haversine_km(lat, lon, plat, plon)
+                if d < best_km:
+                    best_km = d
+                    best_name = name
+
+    if best_km == float("inf"):
+        for plat, plon, name in points:
+            d = haversine_km(lat, lon, plat, plon)
+            if d < best_km:
+                best_km = d
+                best_name = name
+
+    return best_km, best_name
 
 
 def _load_airports(path: Path) -> List[Tuple[float, float, str]]:
@@ -107,7 +161,7 @@ def _load_hospitals(path: Path) -> List[Tuple[float, float, str]]:
 class GeoContext:
     """
     Lazy-loading geographic context: airports and hospitals.
-    Exposes distance and is_near queries for anomaly suppression and enrichment.
+    Uses a spatial grid index for faster nearest-neighbor queries.
     """
 
     def __init__(self, airports_path: Path, hospitals_path: Path):
@@ -115,16 +169,24 @@ class GeoContext:
         self.hospitals_path = Path(hospitals_path)
         self._airports: Optional[List[Tuple[float, float, str]]] = None
         self._hospitals: Optional[List[Tuple[float, float, str]]] = None
+        self._airports_grid: Optional[Dict[Tuple[int, int], List[int]]] = None
+        self._hospitals_grid: Optional[Dict[Tuple[int, int], List[int]]] = None
+        self._nearest_cache: Dict[Tuple[int, int, str], Tuple[float, Optional[str]]] = {}
 
     def _ensure_airports(self) -> List[Tuple[float, float, str]]:
         if self._airports is None:
             self._airports = _load_airports(self.airports_path)
+            self._airports_grid = _build_grid(self._airports)
         return self._airports
 
     def _ensure_hospitals(self) -> List[Tuple[float, float, str]]:
         if self._hospitals is None:
             self._hospitals = _load_hospitals(self.hospitals_path)
+            self._hospitals_grid = _build_grid(self._hospitals)
         return self._hospitals
+
+    def _cache_key(self, lat: float, lon: float, kind: str) -> Tuple[int, int, str]:
+        return (int(round(lat * 10)), int(round(lon * 10)), kind)
 
     def distance_to_nearest_airport(self, lat: float, lon: float) -> Tuple[float, Optional[str]]:
         """Return (distance_km, name or None). Returns (inf, None) if no data or invalid input."""
@@ -135,17 +197,18 @@ class GeoContext:
             lon_f = float(lon)
         except (TypeError, ValueError):
             return (float("inf"), None)
+
+        cache_key = self._cache_key(lat_f, lon_f, "airport")
+        if cache_key in self._nearest_cache:
+            return self._nearest_cache[cache_key]
+
         points = self._ensure_airports()
         if not points:
             return (float("inf"), None)
-        best_km = float("inf")
-        best_name: Optional[str] = None
-        for plat, plon, name in points:
-            d = haversine_km(lat_f, lon_f, plat, plon)
-            if d < best_km:
-                best_km = d
-                best_name = name
-        return (best_km, best_name)
+
+        result = _nearest_in_points(lat_f, lon_f, points, self._airports_grid or {})
+        self._nearest_cache[cache_key] = result
+        return result
 
     def distance_to_nearest_hospital(self, lat: float, lon: float) -> Tuple[float, Optional[str]]:
         """Return (distance_km, name or None). Returns (inf, None) if no data or invalid input."""
@@ -156,17 +219,18 @@ class GeoContext:
             lon_f = float(lon)
         except (TypeError, ValueError):
             return (float("inf"), None)
+
+        cache_key = self._cache_key(lat_f, lon_f, "hospital")
+        if cache_key in self._nearest_cache:
+            return self._nearest_cache[cache_key]
+
         points = self._ensure_hospitals()
         if not points:
             return (float("inf"), None)
-        best_km = float("inf")
-        best_name: Optional[str] = None
-        for plat, plon, name in points:
-            d = haversine_km(lat_f, lon_f, plat, plon)
-            if d < best_km:
-                best_km = d
-                best_name = name
-        return (best_km, best_name)
+
+        result = _nearest_in_points(lat_f, lon_f, points, self._hospitals_grid or {})
+        self._nearest_cache[cache_key] = result
+        return result
 
     def is_near_airport(self, lat: float, lon: float, radius_km: float) -> bool:
         """True if (lat, lon) is within radius_km of any airport."""

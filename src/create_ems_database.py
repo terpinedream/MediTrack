@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List
 from datetime import datetime
 
+from aircraft_filter.base import filtered_to_dict
 from filter_ems_aircraft import EMSAircraftFilter, EMSAircraft
 
 
@@ -26,21 +27,7 @@ class EMSDatabaseGenerator:
         
     def to_dict(self, aircraft: EMSAircraft) -> dict:
         """Convert EMSAircraft to dictionary."""
-        return {
-            'n_number': aircraft.n_number,
-            'mode_s_hex': aircraft.mode_s_hex,
-            'model_code': aircraft.model_code,
-            'model_name': aircraft.model_name,
-            'manufacturer': aircraft.manufacturer,
-            'owner_name': aircraft.owner_name,
-            'owner_city': aircraft.owner_city,
-            'owner_state': aircraft.owner_state,
-            'match_reasons': aircraft.match_reasons,
-            'confidence': aircraft.confidence,
-            'type_aircraft': aircraft.type_aircraft,
-            'type_engine': aircraft.type_engine,
-            'status_code': aircraft.status_code
-        }
+        return filtered_to_dict(aircraft)
     
     def save_json(self, aircraft_list: List[EMSAircraft]) -> None:
         """Save aircraft data to JSON file."""
@@ -87,7 +74,7 @@ class EMSDatabaseGenerator:
         fieldnames = [
             'n_number', 'mode_s_hex', 'model_code', 'model_name', 'manufacturer',
             'owner_name', 'owner_city', 'owner_state', 'match_reasons', 'confidence',
-            'type_aircraft', 'type_engine', 'status_code'
+            'score', 'category', 'type_aircraft', 'type_engine', 'status_code'
         ]
         
         with open(output_file, 'w', newline='', encoding='utf-8') as f:
@@ -126,6 +113,8 @@ class EMSDatabaseGenerator:
                 owner_state TEXT,
                 match_reasons TEXT,
                 confidence TEXT,
+                score INTEGER,
+                category TEXT,
                 type_aircraft TEXT,
                 type_engine TEXT,
                 status_code TEXT
@@ -144,8 +133,8 @@ class EMSDatabaseGenerator:
                 INSERT INTO ems_aircraft (
                     n_number, mode_s_hex, model_code, model_name, manufacturer,
                     owner_name, owner_city, owner_state, match_reasons, confidence,
-                    type_aircraft, type_engine, status_code
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    score, category, type_aircraft, type_engine, status_code
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 aircraft.n_number,
                 aircraft.mode_s_hex,
@@ -157,6 +146,8 @@ class EMSDatabaseGenerator:
                 aircraft.owner_state,
                 '; '.join(aircraft.match_reasons),
                 aircraft.confidence,
+                aircraft.score,
+                aircraft.category,
                 aircraft.type_aircraft,
                 aircraft.type_engine,
                 aircraft.status_code

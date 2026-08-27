@@ -85,8 +85,8 @@ class AircraftTable(QTableWidget):
     
     def init_ui(self):
         """Initialize UI components."""
-        # Set columns: Model, ICAO24, Callsign, N-Number, Status, Speed, Altitude, Location
-        columns = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
+        # Set columns
+        columns = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Confidence', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
         self.setColumnCount(len(columns))
         self.setHorizontalHeaderLabels(columns)
         
@@ -107,7 +107,7 @@ class AircraftTable(QTableWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Model
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # ICAO24
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)  # Location
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Location
         
         # Style
         self.setStyleSheet(f"""
@@ -236,8 +236,16 @@ class AircraftTable(QTableWidget):
                     self.setItem(row, 3, QTableWidgetItem(n_number))
                 else:
                     self.item(row, 3).setText(n_number)
+
+                # Confidence (column 4)
+                confidence = aircraft_info.get('confidence', 'N/A') if aircraft_info else 'N/A'
+                confidence_text = confidence.title() if confidence and confidence != 'N/A' else 'N/A'
+                if existing_row is None:
+                    self.setItem(row, 4, QTableWidgetItem(confidence_text))
+                else:
+                    self.item(row, 4).setText(confidence_text)
                 
-                # Status (column 4) - in air / on ground
+                # Status (column 5) - in air / on ground
                 on_ground = state.get('on_ground')
                 if on_ground is True:
                     status_text = 'On ground'
@@ -246,34 +254,34 @@ class AircraftTable(QTableWidget):
                 else:
                     status_text = 'N/A'
                 if existing_row is None:
-                    self.setItem(row, 4, QTableWidgetItem(status_text))
+                    self.setItem(row, 5, QTableWidgetItem(status_text))
                 else:
-                    self.item(row, 4).setText(status_text)
+                    self.item(row, 5).setText(status_text)
                 
-                # Speed (column 5)
+                # Speed (column 6)
                 velocity = state.get('velocity')
                 speed_text = f"{velocity:.0f}" if velocity is not None else "N/A"
                 if existing_row is None:
-                    self.setItem(row, 5, QTableWidgetItem(speed_text))
+                    self.setItem(row, 6, QTableWidgetItem(speed_text))
                 else:
-                    self.item(row, 5).setText(speed_text)
+                    self.item(row, 6).setText(speed_text)
                 
-                # Altitude (column 6)
+                # Altitude (column 7)
                 altitude = state.get('baro_altitude') or state.get('geo_altitude')
                 alt_text = f"{altitude:.0f}" if altitude is not None else "N/A"
                 if existing_row is None:
-                    self.setItem(row, 6, QTableWidgetItem(alt_text))
+                    self.setItem(row, 7, QTableWidgetItem(alt_text))
                 else:
-                    self.item(row, 6).setText(alt_text)
+                    self.item(row, 7).setText(alt_text)
                 
-                # Location (column 7)
+                # Location (column 8)
                 lat = state.get('latitude')
                 lon = state.get('longitude')
                 if existing_row is None:
                     location_item = QTableWidgetItem()
-                    self.setItem(row, 7, location_item)
+                    self.setItem(row, 8, location_item)
                 else:
-                    location_item = self.item(row, 7)
+                    location_item = self.item(row, 8)
                 
                 if lat is not None and lon is not None:
                     lat_key = round(lat, 2)
@@ -326,6 +334,9 @@ class AircraftTable(QTableWidget):
                         'type_aircraft': aircraft_info.get('type_aircraft', ''),
                         'type_engine': aircraft_info.get('type_engine', ''),
                         'model_code': aircraft_info.get('model_code', ''),
+                        'confidence': aircraft_info.get('confidence', 'N/A'),
+                        'match_reasons': aircraft_info.get('match_reasons', []),
+                        'score': aircraft_info.get('score'),
                         'flightaware_url': None,
                         'broadcastify_url': None
                     }
@@ -454,7 +465,7 @@ class AircraftTable(QTableWidget):
         """Handle mouse clicks on location cells to copy coordinates."""
         if event.button() == Qt.MouseButton.LeftButton:
             item = self.itemAt(event.pos())
-            if item and item.column() == 7:  # Location column
+            if item and item.column() == 8:  # Location column
                 coords = item.data(Qt.ItemDataRole.UserRole)
                 if coords:
                     # Copy to clipboard

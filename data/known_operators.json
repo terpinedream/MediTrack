@@ -1,0 +1,33 @@
+{
+  "ems": [
+    "AIR METHODS",
+    "MED-TRANS",
+    "MED TRANS",
+    "PHI INC",
+    "PHI AIR",
+    "PHI HELICOPTER",
+    "GUARDIAN FLIGHT",
+    "REACH AIR MEDICAL",
+    "REACH AIR",
+    "HEALTHNET",
+    "HEALTH NET",
+    "CALSTAR",
+    "STARS AIR AMBULANCE",
+    "STARS AIR",
+    "LIFE FLIGHT NETWORK",
+    "LIFE FLIGHT",
+    "AIR EVAC",
+    "AIREVAC",
+    "ORANGE COUNTY FIRE AUTHORITY",
+    "CAL FIRE",
+    "CALFIRE"
+  ],
+  "police": [
+    "CIVIL AIR PATROL",
+    "STATE POLICE",
+    "STATE PATROL",
+    "HIGHWAY PATROL",
+    "DEPARTMENT OF PUBLIC SAFETY"
+  ],
+  "both": []
+}

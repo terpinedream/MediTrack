@@ -24,6 +24,7 @@ from geo_context import GeoContext
 from region_selector import select_region, select_region_or_state, filter_aircraft_by_states
 from regions import get_states_bbox
 from location_utils import get_broadcastify_url_simple
+from callsign_utils import get_callsign_boost
 
 
 class MonitorService:
@@ -341,6 +342,7 @@ class MonitorService:
                     ems_states[icao24] = {
                         'icao24': icao24,
                         'callsign': state[1] if len(state) > 1 and state[1] else None,
+                        'callsign_boost': get_callsign_boost(state[1] if len(state) > 1 else None),
                         'origin_country': state[2] if len(state) > 2 and state[2] else None,
                         'time_position': state[3] if len(state) > 3 and state[3] else None,
                         'last_contact': state[4] if len(state) > 4 and state[4] else None,
@@ -388,19 +390,27 @@ class MonitorService:
             state_history
         )
         
-        # Geo filter: suppress rapid_descent when near airport and descending (likely landing)
+        # Geo filter: suppress landing-related false positives near airports
         filtered = []
         for anomaly in anomalies:
-            if anomaly.get("type") == "rapid_descent":
-                icao24 = anomaly.get("icao24")
-                state = current_states.get(icao24) if icao24 else None
-                if state:
-                    lat = state.get("latitude")
-                    lon = state.get("longitude")
-                    vr = state.get("vertical_rate")
-                    if lat is not None and lon is not None and vr is not None and vr < 0:
-                        if self.geo_context.is_near_airport(lat, lon, config.GEO_NEAR_AIRPORT_KM):
-                            continue  # suppress
+            icao24 = anomaly.get("icao24")
+            state = current_states.get(icao24) if icao24 else None
+            if state:
+                lat = state.get("latitude")
+                lon = state.get("longitude")
+                vr = state.get("vertical_rate")
+                on_ground = state.get("on_ground")
+                anomaly_type = anomaly.get("type")
+
+                if lat is not None and lon is not None:
+                    near_airport = self.geo_context.is_near_airport(
+                        lat, lon, config.GEO_NEAR_AIRPORT_KM
+                    )
+                    if near_airport:
+                        if anomaly_type == "rapid_descent" and vr is not None and vr < 0:
+                            continue
+                        if anomaly_type == "high_speed" and (on_ground or (vr is not None and vr < 0)):
+                            continue
             filtered.append(anomaly)
         anomalies = filtered
         

@@ -1,0 +1,54 @@
+[
+  {
+    "n_number": "100HN",
+    "owner_substring": "HEALTHNET",
+    "category": "ems",
+    "should_match": true,
+    "note": "Known EMS operator"
+  },
+  {
+    "n_number": "100DE",
+    "owner_substring": "SHERIFF",
+    "category": "police",
+    "should_match": true,
+    "note": "Sheriff department"
+  },
+  {
+    "model": "STANDARD LIBELLE",
+    "category": "ems",
+    "should_match": false,
+    "note": "Glider must not match BELL pattern"
+  },
+  {
+    "model": "FLIGHTSTAR IISC",
+    "category": "ems",
+    "should_match": false,
+    "note": "Ultralight must not match FLIGHT keyword as model"
+  },
+  {
+    "owner": "FIRST FLIGHT AVIATION LLC",
+    "category": "ems",
+    "should_match": false,
+    "note": "Flight school excluded by negative keyword"
+  },
+  {
+    "owner": "LIFE FLIGHT NETWORK",
+    "category": "ems",
+    "should_match": true,
+    "note": "Compound LIFE FLIGHT keyword"
+  },
+  {
+    "model": "R44 II",
+    "owner": "101 GD CORP",
+    "category": "police",
+    "should_match": false,
+    "note": "Ambiguous model without agency owner"
+  },
+  {
+    "model": "AS350B3",
+    "owner": "DEPARTMENT OF HOMELAND SECURITY",
+    "category": "police",
+    "should_match": true,
+    "note": "Agency owner with police model"
+  }
+]

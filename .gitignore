@@ -85,6 +85,15 @@ ACFTREF.txt
 test_*.py
 *_test.py
 tests/__pycache__/
+!tests/test_aircraft_filter.py
+
+# Filter configuration (tracked)
+!data/known_operators.json
+!data/ems_models.txt
+!data/ems_owner_keywords.txt
+!data/police_models.txt
+!data/police_owner_keywords.txt
+!data/negative_owner_keywords.txt
 
 # Logs
 *.log

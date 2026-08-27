@@ -41,8 +41,8 @@ CACHE_ENABLED = os.getenv("CACHE_ENABLED", "true").lower() == "true"
 CACHE_MAX_AGE_SECONDS = int(os.getenv("CACHE_MAX_AGE_SECONDS", "60"))
 
 # Filtering settings
-EXCLUDE_INDIVIDUAL_OWNERS = os.getenv("EXCLUDE_INDIVIDUAL_OWNERS", "false").lower() == "true"
-MIN_CONFIDENCE_LEVEL = os.getenv("MIN_CONFIDENCE_LEVEL", "low")  # 'low', 'medium', 'high'
+EXCLUDE_INDIVIDUAL_OWNERS = os.getenv("EXCLUDE_INDIVIDUAL_OWNERS", "true").lower() == "true"
+MIN_CONFIDENCE_LEVEL = os.getenv("MIN_CONFIDENCE_LEVEL", "medium")  # 'low', 'medium', 'high'
 
 # Regional tracking settings
 # Options: 'northeast', 'midwest', 'south', 'west', 'all', or None (prompts interactively)
