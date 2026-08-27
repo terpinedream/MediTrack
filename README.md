@@ -6,9 +6,12 @@
 
 Track and monitor EMS and Police/Law Enforcement aircraft in the US using the [OpenSky Network](https://opensky-network.org) API. Identifies aircraft from the FAA registry and flags unusual flight patterns (speed, altitude, squawks, multi-launch).
 
+See [CHANGELOG.md](CHANGELOG.md) for recent changes and [CONTRIBUTING.md](CONTRIBUTING.md) if you want to help.
+
 ## Features
 
-- **EMS & Police**: Filter FAA registry by model, owner keywords, and N-number; monitor both databases.
+- **EMS & Police**: Filter FAA registry by model, owner keywords, and N-number with weighted scoring and confidence tiers.
+- **Owner tags**: Colored chips in the main list (Police, EMS, Hospital, City, County, and others) derived from the registrant name after filtering.
 - **Anomaly detection**: High speed, rapid climb/descent, emergency squawks, erratic heading, multiple launches.
 - **Geo context**: Suppresses false positives near airports (e.g. landings); enriches alerts with hospital proximity.
 - **Regional**: Monitor by US region or state(s). GUI and CLI.
@@ -70,12 +73,19 @@ Key settings in `config.py` or `.env`:
 
 Place **us-airports.csv** (OurAirports) and **Hospitals.csv** in the project root for airport/hospital proximity; see Setup data in the GUI if you use it to build DBs.
 
+## Owner tags
+
+The Tags column in the monitoring table (and the aircraft detail dialog) classifies already-filtered aircraft from the FAA owner name. Tags are display-only; they do not change scoring or who is in the database. Hover a chip to see the owner name and the keyword that matched.
+
+Rebuild databases after you edit model or owner keyword files. Tag-only changes in `src/owner_tags.py` apply the next time you open the GUI.
+
 ## Project layout
 
 - `data/` — Generated DBs (`ems_aircraft.json`, `police_aircraft.json`, etc.), filter config, cache, logs.
 - `data/ems_models.txt`, `data/ems_owner_keywords.txt` — EMS filter patterns (see also police equivalents).
+- `data/negative_owner_keywords.txt`, `data/known_operators.json` — Shared exclusions and operator allowlist.
 - `ReleasableAircraft/` — FAA files (`MASTER.txt`, `ACFTREF.txt`) after you extract the ZIP.
-- `src/` — Filters, `create_ems_database.py`, OpenSky client, monitor, anomaly detector, GUI.
+- `src/` — Filters (`aircraft_filter/`), `owner_tags.py`, OpenSky client, monitor, anomaly detector, GUI.
 - `mediModels.txt` — Deprecated; filter data now lives in `data/` files.
 
 ## Data sources
@@ -85,7 +95,7 @@ Place **us-airports.csv** (OurAirports) and **Hospitals.csv** in the project roo
 
 ## License
 
-Use in line with OpenSky API terms and FAA data policies. Please be aware this program can produce false positives for both anomalies and flagged aircrafts.  
+[MIT](LICENSE). Use in line with OpenSky API terms and FAA data policies. Please be aware this program can produce false positives for both anomalies and flagged aircraft.  
 
 ---
 
