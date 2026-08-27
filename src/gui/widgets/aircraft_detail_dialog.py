@@ -97,6 +97,27 @@ class AircraftDetailDialog(QDialog):
                 owner_location = ', '.join(filter(lambda x: x != 'N/A', [owner_city, owner_state]))
                 owner_text += f" ({owner_location})"
             self._add_info_row(aircraft_layout, "Owner:", owner_text)
+
+        # Filter metadata
+        confidence = self.aircraft_info.get('confidence')
+        if confidence:
+            self._add_info_row(aircraft_layout, "Confidence:", confidence.title())
+
+        score = self.aircraft_info.get('score')
+        if score is not None:
+            self._add_info_row(aircraft_layout, "Match Score:", str(score))
+
+        match_reasons = self.aircraft_info.get('match_reasons')
+        if match_reasons:
+            if isinstance(match_reasons, list):
+                reasons_text = '; '.join(match_reasons)
+            else:
+                reasons_text = str(match_reasons)
+            self._add_info_row(aircraft_layout, "Match Reasons:", reasons_text)
+
+        callsign_boost = self.aircraft_state.get('callsign_boost')
+        if callsign_boost:
+            self._add_info_row(aircraft_layout, "Callsign Boost:", callsign_boost)
         
         aircraft_group.setLayout(aircraft_layout)
         content_layout.addWidget(aircraft_group)

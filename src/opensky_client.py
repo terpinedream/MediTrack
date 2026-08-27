@@ -792,23 +792,26 @@ class OpenSkyClient:
 def load_ems_aircraft_db(db_path: Path) -> List[Dict]:
     """
     Load aircraft from generated database (EMS or Police).
-    
+
+    Applies MIN_CONFIDENCE_LEVEL filtering from config.
+
     Args:
         db_path: Path to SQLite database or JSON file
-    
+
     Returns:
         List of aircraft dictionaries
     """
+    import config
+    from aircraft_filter.base import apply_confidence_filter
+
+    aircraft: List[Dict] = []
     if db_path.suffix == '.json':
         with open(db_path, 'r') as f:
             data = json.load(f)
-            # Handle both formats:
-            # - EMS: {'aircraft': [...]}
-            # - Police: [...] (direct list)
             if isinstance(data, list):
-                return data
+                aircraft = data
             elif isinstance(data, dict) and 'aircraft' in data:
-                return data['aircraft']
+                aircraft = data['aircraft']
             else:
                 raise ValueError(f"Unexpected JSON format in {db_path}")
     elif db_path.suffix == '.db':
@@ -816,16 +819,23 @@ def load_ems_aircraft_db(db_path: Path) -> List[Dict]:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        # Try ems_aircraft table first, then police_aircraft
         try:
             cursor.execute("SELECT * FROM ems_aircraft")
         except sqlite3.OperationalError:
             cursor.execute("SELECT * FROM police_aircraft")
         rows = cursor.fetchall()
         conn.close()
-        return [dict(row) for row in rows]
+        aircraft = [dict(row) for row in rows]
     else:
         raise ValueError(f"Unsupported database format: {db_path.suffix}")
+
+    total = len(aircraft)
+    filtered = apply_confidence_filter(aircraft)
+    excluded = total - len(filtered)
+    if excluded > 0:
+        print(f"Confidence filter ({config.MIN_CONFIDENCE_LEVEL}): "
+              f"loaded {len(filtered)} of {total} aircraft ({excluded} excluded)")
+    return filtered
 
 
 def main():
