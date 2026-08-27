@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from typing import Dict, Optional
 import webbrowser
 from gui.theme import COLORS, SPACING, FONT_SIZES, RADIUS, get_button_style
+from owner_tags import classify_from_aircraft
 
 
 class AircraftDetailDialog(QDialog):
@@ -97,6 +98,10 @@ class AircraftDetailDialog(QDialog):
                 owner_location = ', '.join(filter(lambda x: x != 'N/A', [owner_city, owner_state]))
                 owner_text += f" ({owner_location})"
             self._add_info_row(aircraft_layout, "Owner:", owner_text)
+
+        owner_tags = classify_from_aircraft(self.aircraft_info)
+        if owner_tags:
+            self._add_tags_row(aircraft_layout, owner_tags)
 
         # Filter metadata
         confidence = self.aircraft_info.get('confidence')
@@ -289,6 +294,31 @@ class AircraftDetailDialog(QDialog):
         value_widget.setWordWrap(True)
         row_layout.addWidget(value_widget, stretch=1)
         
+        layout.addLayout(row_layout)
+
+    def _add_tags_row(self, layout: QVBoxLayout, tags):
+        """Add colored owner-type tag chips."""
+        row_layout = QHBoxLayout()
+        row_layout.setSpacing(SPACING['sm'])
+
+        label_widget = QLabel("Tags:")
+        label_widget.setStyleSheet(f"font-weight: 600; color: {COLORS['text_secondary']};")
+        label_widget.setMinimumWidth(120)
+        row_layout.addWidget(label_widget)
+
+        for tag in tags:
+            chip = QLabel(tag.label)
+            chip.setStyleSheet(
+                f"background-color: {tag.bg}; color: {tag.fg}; "
+                f"border-radius: {RADIUS['md']}px; "
+                f"padding: {SPACING['xs']}px {SPACING['sm']}px; "
+                f"font-weight: 600; font-size: {FONT_SIZES['sm']}px;"
+            )
+            tooltip = ', '.join(tag.matched) if tag.matched else tag.label
+            chip.setToolTip(tooltip)
+            row_layout.addWidget(chip)
+
+        row_layout.addStretch()
         layout.addLayout(row_layout)
     
     def _get_flightradar24_url(self) -> Optional[str]:

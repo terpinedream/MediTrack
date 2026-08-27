@@ -2,11 +2,13 @@
 Aircraft data table widget.
 """
 
-from PyQt6.QtWidgets import QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox, QStyledItemDelegate
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QClipboard, QBrush, QColor, QPainter
+from PyQt6.QtWidgets import (
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QStyledItemDelegate, QStyle,
+)
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect
+from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
 from typing import Dict, List, Optional, Set
-import webbrowser
 import sys
 from pathlib import Path
 
@@ -19,6 +21,27 @@ if str(Path(__file__).parent.parent.parent) not in sys.path:
 
 from location_utils import get_location_name_from_coordinates
 from gui.theme import COLORS, SPACING
+from owner_tags import (
+    classify_from_aircraft,
+    format_tag_labels,
+    tag_tooltip,
+    tags_as_dicts,
+)
+
+AIRCRAFT_COLUMNS = [
+    'Model', 'ICAO24', 'Callsign', 'N-Number', 'Confidence', 'Tags',
+    'Status', 'Speed (kts)', 'Altitude (ft)', 'Location',
+]
+COL_MODEL = 0
+COL_ICAO24 = 1
+COL_CALLSIGN = 2
+COL_N_NUMBER = 3
+COL_CONFIDENCE = 4
+COL_TAGS = 5
+COL_STATUS = 6
+COL_SPEED = 7
+COL_ALTITUDE = 8
+COL_LOCATION = 9
 
 
 class AircraftTableDelegate(QStyledItemDelegate):
@@ -32,6 +55,80 @@ class AircraftTableDelegate(QStyledItemDelegate):
             elif isinstance(background, QColor):
                 painter.fillRect(option.rect, background)
         super().paint(painter, option, index)
+
+
+def _hex_color(hex_color: str, alpha: int = 255) -> QColor:
+    hex_color = (hex_color or '').lstrip('#')
+    if len(hex_color) == 6:
+        return QColor(
+            int(hex_color[0:2], 16),
+            int(hex_color[2:4], 16),
+            int(hex_color[4:6], 16),
+            alpha,
+        )
+    return QColor(107, 114, 128, alpha)
+
+
+class TagsDelegate(QStyledItemDelegate):
+    """Paint owner-type tags as colored chips in the Tags column."""
+
+    PILL_PAD_X = 6
+    PILL_PAD_Y = 2
+    PILL_GAP = 5
+    PILL_RADIUS = 4
+
+    def paint(self, painter: QPainter, option, index):
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        background = index.data(Qt.ItemDataRole.BackgroundRole)
+        if selected:
+            painter.fillRect(option.rect, QColor(COLORS['selection']))
+        elif background:
+            if isinstance(background, QBrush):
+                painter.fillRect(option.rect, background)
+            elif isinstance(background, QColor):
+                painter.fillRect(option.rect, background)
+
+        tags = index.data(Qt.ItemDataRole.UserRole) or []
+        if not tags:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        fm = option.fontMetrics
+        x = option.rect.x() + 4
+        y = option.rect.y() + max(1, (option.rect.height() - (fm.height() + self.PILL_PAD_Y * 2)) // 2)
+        max_x = option.rect.right() - 4
+        pill_h = fm.height() + self.PILL_PAD_Y * 2
+
+        for i, tag in enumerate(tags):
+            label = tag.get('label', '')
+            text_w = fm.horizontalAdvance(label)
+            pill_w = text_w + self.PILL_PAD_X * 2
+            if x + pill_w > max_x:
+                if i == 0:
+                    label = fm.elidedText(label, Qt.TextElideMode.ElideRight, max(12, max_x - x - self.PILL_PAD_X * 2))
+                    pill_w = fm.horizontalAdvance(label) + self.PILL_PAD_X * 2
+                else:
+                    break
+            pill = QRect(x, y, pill_w, pill_h)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(_hex_color(tag.get('bg', '#6b7280')))
+            painter.drawRoundedRect(pill, self.PILL_RADIUS, self.PILL_RADIUS)
+            painter.setPen(QPen(_hex_color(tag.get('fg', '#ffffff'))))
+            painter.drawText(pill, Qt.AlignmentFlag.AlignCenter, label)
+            x += pill_w + self.PILL_GAP
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        tags = index.data(Qt.ItemDataRole.UserRole) or []
+        fm = option.fontMetrics
+        height = max(24, fm.height() + 10)
+        if not tags:
+            return QSize(48, height)
+        width = 8
+        for tag in tags:
+            width += fm.horizontalAdvance(tag.get('label', '')) + self.PILL_PAD_X * 2 + self.PILL_GAP
+        return QSize(width, height)
 
 
 class LocationLookupWorker(QThread):
@@ -85,10 +182,14 @@ class AircraftTable(QTableWidget):
     
     def init_ui(self):
         """Initialize UI components."""
-        # Set columns
-        columns = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Confidence', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
-        self.setColumnCount(len(columns))
-        self.setHorizontalHeaderLabels(columns)
+        self.setColumnCount(len(AIRCRAFT_COLUMNS))
+        self.setHorizontalHeaderLabels(AIRCRAFT_COLUMNS)
+        tags_header = self.horizontalHeaderItem(COL_TAGS)
+        if tags_header:
+            tags_header.setToolTip(
+                "Owner-type indicators from the registered name "
+                "(city/state, police, EMS, hospital, fire, etc.)"
+            )
         
         # Configure table
         self.setAlternatingRowColors(True)
@@ -101,13 +202,14 @@ class AircraftTable(QTableWidget):
         
         # Delegate so anomaly row BackgroundRole is painted (not overridden by alternating rows)
         self.setItemDelegate(AircraftTableDelegate(self))
+        self.setItemDelegateForColumn(COL_TAGS, TagsDelegate(self))
         
         # Resize columns to content
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)  # Model
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)  # ICAO24
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)  # Location
+        header.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_ICAO24, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_LOCATION, QHeaderView.ResizeMode.Stretch)
         
         # Style
         self.setStyleSheet(f"""
@@ -137,10 +239,10 @@ class AircraftTable(QTableWidget):
             # Get current aircraft ICAO24s
             current_icao24s = set(aircraft_states.keys())
             
-            # Remove aircraft that are no longer active (ICAO24 is column 1)
+            # Remove aircraft that are no longer active
             rows_to_remove = []
             for row in range(self.rowCount() - 1, -1, -1):
-                item = self.item(row, 1)
+                item = self.item(row, COL_ICAO24)
                 if item and item.text() not in current_icao24s:
                     rows_to_remove.append(row)
             
@@ -158,10 +260,10 @@ class AircraftTable(QTableWidget):
             
             # Update or add aircraft
             for icao24, state in aircraft_states.items():
-                # Find existing row (ICAO24 is column 1)
+                # Find existing row
                 existing_row = None
                 for r in range(self.rowCount()):
-                    item = self.item(r, 1)
+                    item = self.item(r, COL_ICAO24)
                     if item and item.text() == icao24:
                         existing_row = r
                         break
@@ -211,41 +313,32 @@ class AircraftTable(QTableWidget):
                         model = 'N/A'
                 else:
                     model = 'N/A'
-                if existing_row is None:
-                    self.setItem(row, 0, QTableWidgetItem(model))
-                else:
-                    self.item(row, 0).setText(model)
+                self._set_cell_text(row, COL_MODEL, model, existing_row)
+                self._set_cell_text(row, COL_ICAO24, icao24, existing_row)
                 
-                # ICAO24 (column 1)
-                if existing_row is None:
-                    self.setItem(row, 1, QTableWidgetItem(icao24))
-                else:
-                    self.item(row, 1).setText(icao24)
-                
-                # Callsign (column 2)
                 callsign = state.get('callsign', 'N/A')
                 callsign_text = callsign if callsign else 'N/A'
-                if existing_row is None:
-                    self.setItem(row, 2, QTableWidgetItem(callsign_text))
-                else:
-                    self.item(row, 2).setText(callsign_text)
+                self._set_cell_text(row, COL_CALLSIGN, callsign_text, existing_row)
                 
-                # N-Number (column 3)
                 n_number = aircraft_info.get('n_number', 'N/A') if aircraft_info else 'N/A'
-                if existing_row is None:
-                    self.setItem(row, 3, QTableWidgetItem(n_number))
-                else:
-                    self.item(row, 3).setText(n_number)
+                self._set_cell_text(row, COL_N_NUMBER, n_number, existing_row)
 
-                # Confidence (column 4)
                 confidence = aircraft_info.get('confidence', 'N/A') if aircraft_info else 'N/A'
                 confidence_text = confidence.title() if confidence and confidence != 'N/A' else 'N/A'
-                if existing_row is None:
-                    self.setItem(row, 4, QTableWidgetItem(confidence_text))
-                else:
-                    self.item(row, 4).setText(confidence_text)
+                self._set_cell_text(row, COL_CONFIDENCE, confidence_text, existing_row)
+
+                owner_tags = classify_from_aircraft(aircraft_info, n_number)
+                tags_item = self.item(row, COL_TAGS) if existing_row is not None else None
+                if tags_item is None:
+                    tags_item = QTableWidgetItem()
+                    self.setItem(row, COL_TAGS, tags_item)
+                tags_item.setText(format_tag_labels(owner_tags))
+                tags_item.setData(Qt.ItemDataRole.UserRole, tags_as_dicts(owner_tags))
+                tags_item.setToolTip(tag_tooltip(
+                    aircraft_info.get('owner_name') if aircraft_info else None,
+                    owner_tags,
+                ))
                 
-                # Status (column 5) - in air / on ground
                 on_ground = state.get('on_ground')
                 if on_ground is True:
                     status_text = 'On ground'
@@ -253,35 +346,22 @@ class AircraftTable(QTableWidget):
                     status_text = 'In air'
                 else:
                     status_text = 'N/A'
-                if existing_row is None:
-                    self.setItem(row, 5, QTableWidgetItem(status_text))
-                else:
-                    self.item(row, 5).setText(status_text)
+                self._set_cell_text(row, COL_STATUS, status_text, existing_row)
                 
-                # Speed (column 6)
                 velocity = state.get('velocity')
                 speed_text = f"{velocity:.0f}" if velocity is not None else "N/A"
-                if existing_row is None:
-                    self.setItem(row, 6, QTableWidgetItem(speed_text))
-                else:
-                    self.item(row, 6).setText(speed_text)
+                self._set_cell_text(row, COL_SPEED, speed_text, existing_row)
                 
-                # Altitude (column 7)
                 altitude = state.get('baro_altitude') or state.get('geo_altitude')
                 alt_text = f"{altitude:.0f}" if altitude is not None else "N/A"
-                if existing_row is None:
-                    self.setItem(row, 7, QTableWidgetItem(alt_text))
-                else:
-                    self.item(row, 7).setText(alt_text)
+                self._set_cell_text(row, COL_ALTITUDE, alt_text, existing_row)
                 
-                # Location (column 8)
                 lat = state.get('latitude')
                 lon = state.get('longitude')
-                if existing_row is None:
+                location_item = self.item(row, COL_LOCATION) if existing_row is not None else None
+                if location_item is None:
                     location_item = QTableWidgetItem()
-                    self.setItem(row, 8, location_item)
-                else:
-                    location_item = self.item(row, 8)
+                    self.setItem(row, COL_LOCATION, location_item)
                 
                 if lat is not None and lon is not None:
                     lat_key = round(lat, 2)
@@ -337,6 +417,7 @@ class AircraftTable(QTableWidget):
                         'confidence': aircraft_info.get('confidence', 'N/A'),
                         'match_reasons': aircraft_info.get('match_reasons', []),
                         'score': aircraft_info.get('score'),
+                        'owner_tags': tags_as_dicts(owner_tags),
                         'flightaware_url': None,
                         'broadcastify_url': None
                     }
@@ -347,7 +428,7 @@ class AircraftTable(QTableWidget):
                         self.aircraft_data[icao24]['flightaware_url'] = f"https://www.flightaware.com/live/flight/{n_clean}"
                 
                 # Store state and aircraft_info on ICAO24 cell (column 1)
-                icao_item = self.item(row, 1)
+                icao_item = self.item(row, COL_ICAO24)
                 if icao_item:
                     icao_item.setData(Qt.ItemDataRole.UserRole + 1, state)
                     if aircraft_info:
@@ -355,7 +436,7 @@ class AircraftTable(QTableWidget):
                 
                 # Anomaly row background
                 if anomaly_brush and icao24 in anomaly_icao24s:
-                    for col in range(8):
+                    for col in range(self.columnCount()):
                         cell = self.item(row, col)
                         if cell:
                             cell.setData(Qt.ItemDataRole.BackgroundRole, anomaly_brush)
@@ -367,9 +448,9 @@ class AircraftTable(QTableWidget):
             # Clear background for rows without an anomaly
             if anomaly_icao24s is not None:
                 for row in range(self.rowCount()):
-                    icao_item = self.item(row, 1)
+                    icao_item = self.item(row, COL_ICAO24)
                     if icao_item and icao_item.text() not in anomaly_icao24s:
-                        for col in range(8):
+                        for col in range(self.columnCount()):
                             cell = self.item(row, col)
                             if cell:
                                 cell.setData(Qt.ItemDataRole.BackgroundRole, None)
@@ -377,7 +458,15 @@ class AircraftTable(QTableWidget):
         finally:
             self.setSortingEnabled(was_sorting)
             if was_sorting:
-                self.sortItems(1, Qt.SortOrder.AscendingOrder)
+                self.sortItems(COL_ICAO24, Qt.SortOrder.AscendingOrder)
+
+    def _set_cell_text(self, row: int, col: int, text: str, existing_row):
+        """Create or update a plain-text table cell."""
+        item = self.item(row, col) if existing_row is not None else None
+        if item is None:
+            self.setItem(row, col, QTableWidgetItem(text))
+        else:
+            item.setText(text)
     
     def _process_location_lookup(self):
         """Process one location lookup from queue using background thread."""
@@ -423,7 +512,7 @@ class AircraftTable(QTableWidget):
     def _on_item_clicked(self, item: QTableWidgetItem):
         """Handle item click - emit ICAO24 signal for detail dialog."""
         row = item.row()
-        icao24_item = self.item(row, 1)  # ICAO24 is column 1
+        icao24_item = self.item(row, COL_ICAO24)
         if icao24_item:
             icao24 = icao24_item.text()
             if icao24:
@@ -432,7 +521,7 @@ class AircraftTable(QTableWidget):
     def select_aircraft_by_icao24(self, icao24: str) -> bool:
         """Select and scroll to aircraft with given ICAO24."""
         for row in range(self.rowCount()):
-            item = self.item(row, 1)  # ICAO24 is column 1
+            item = self.item(row, COL_ICAO24)
             if item and item.text() == icao24:
                 self.selectRow(row)
                 self.scrollToItem(item)
@@ -449,13 +538,14 @@ class AircraftTable(QTableWidget):
     
     def get_export_rows(self) -> List[Dict[str, str]]:
         """Return current table rows as list of dicts (header -> cell text) for export."""
-        headers = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
+        headers = []
+        for col in range(self.columnCount()):
+            header_item = self.horizontalHeaderItem(col)
+            headers.append(header_item.text() if header_item else f"Column {col}")
         rows = []
         for row in range(self.rowCount()):
             row_data = {}
             for col, h in enumerate(headers):
-                if col >= self.columnCount():
-                    break
                 item = self.item(row, col)
                 row_data[h] = item.text() if item else ""
             rows.append(row_data)
@@ -465,7 +555,7 @@ class AircraftTable(QTableWidget):
         """Handle mouse clicks on location cells to copy coordinates."""
         if event.button() == Qt.MouseButton.LeftButton:
             item = self.itemAt(event.pos())
-            if item and item.column() == 8:  # Location column
+            if item and item.column() == COL_LOCATION:
                 coords = item.data(Qt.ItemDataRole.UserRole)
                 if coords:
                     # Copy to clipboard

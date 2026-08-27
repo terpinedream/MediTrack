@@ -405,8 +405,9 @@ class MonitoringWindow(QMainWindow):
         edit_menu = menubar.addMenu("&Edit")
         visible_menu = edit_menu.addMenu("Visible columns")
         self._column_actions = []
-        col_names = ['Model', 'ICAO24', 'Callsign', 'N-Number', 'Status', 'Speed (kts)', 'Altitude (ft)', 'Location']
-        for col, name in enumerate(col_names):
+        for col in range(self.aircraft_table.columnCount()):
+            header_item = self.aircraft_table.horizontalHeaderItem(col)
+            name = header_item.text() if header_item else f"Column {col}"
             act = QAction(name, self)
             act.setCheckable(True)
             act.setChecked(True)
@@ -451,7 +452,9 @@ class MonitoringWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Stretch)
+        last_col = self.aircraft_table.columnCount() - 1
+        if last_col >= 0:
+            header.setSectionResizeMode(last_col, QHeaderView.ResizeMode.Stretch)
     
     def _reset_layout(self):
         """Reset main splitter to default sizes."""
