@@ -6,8 +6,9 @@ Orchestrates polling, state tracking, and anomaly detection.
 
 import sys
 import time
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from datetime import datetime, timedelta
 
 # Add project root to path for config import
@@ -25,6 +26,8 @@ from region_selector import select_region, select_region_or_state, filter_aircra
 from regions import get_states_bbox
 from location_utils import get_broadcastify_url_simple
 from callsign_utils import get_callsign_boost
+
+logger = logging.getLogger(__name__)
 
 
 class MonitorService:
@@ -151,39 +154,43 @@ class MonitorService:
             else:
                 print("Monitoring all US (no regional filter)")
         
-        # Build mode_s_set from filtered aircraft
-        self.mode_s_set = {
-            ac['mode_s_hex'].upper().strip() 
-            for ac in self.aircraft 
-            if ac.get('mode_s_hex') and ac['mode_s_hex'].strip()
-        }
+        # Build mode_s_set and lookup index from filtered aircraft
+        self.aircraft_by_icao: Dict[str, Dict] = {}
+        self.mode_s_set = set()
+        for ac in self.aircraft:
+            mode_s = ac.get('mode_s_hex', '').strip().upper()
+            if mode_s:
+                self.mode_s_set.add(mode_s)
+                self.aircraft_by_icao[mode_s] = ac
         self.ems_mode_s_set = self.mode_s_set
-        
-        print(f"Loaded {len(self.aircraft)} {db_name} aircraft from database (after filtering)")
-        print(f"Found {len(self.mode_s_set)} aircraft with Mode S codes")
+
+        logger.info(
+            "Loaded %d %s aircraft from database (after filtering)",
+            len(self.aircraft), db_name,
+        )
+        logger.info("Found %d aircraft with Mode S codes", len(self.mode_s_set))
         
         # Initialize OpenSky client
+        client_kwargs = {
+            'rate_limit_calls': config.OPENSKY_RATE_LIMIT_CALLS,
+            'rate_limit_period': config.OPENSKY_RATE_LIMIT_PERIOD,
+            'cache_dir': self.project_root / "data" / "cache",
+            'cache_enabled': config.CACHE_ENABLED,
+            'cache_max_age_seconds': config.CACHE_MAX_AGE_SECONDS,
+        }
         if credentials_file and credentials_file.exists():
-            self.client = OpenSkyClient(
-                credentials_file=credentials_file,
-                cache_dir=self.project_root / "data" / "cache"
-            )
+            self.client = OpenSkyClient(credentials_file=credentials_file, **client_kwargs)
         else:
-            # Try credentials.json in project root
             creds_file = self.project_root / "credentials.json"
             if creds_file.exists():
-                self.client = OpenSkyClient(
-                    credentials_file=creds_file,
-                    cache_dir=self.project_root / "data" / "cache"
-                )
+                self.client = OpenSkyClient(credentials_file=creds_file, **client_kwargs)
             else:
-                # Use environment variables
                 self.client = OpenSkyClient(
                     client_id=config.OPENSKY_CLIENT_ID if hasattr(config, 'OPENSKY_CLIENT_ID') else None,
                     client_secret=config.OPENSKY_CLIENT_SECRET if hasattr(config, 'OPENSKY_CLIENT_SECRET') else None,
                     username=config.OPENSKY_USERNAME,
                     password=config.OPENSKY_PASSWORD,
-                    cache_dir=self.project_root / "data" / "cache"
+                    **client_kwargs,
                 )
         
         # Test authentication
@@ -219,6 +226,18 @@ class MonitorService:
         self.paused = False
         self.current_states = {}
         self.recent_anomalies = []
+        self._cleanup_done_at_start = False
+
+    def _maybe_cleanup_state_db(self):
+        """Run retention cleanup at start and periodically."""
+        if not self._cleanup_done_at_start:
+            self.state_tracker.cleanup_old_data(days_to_keep=config.MONITOR_STATE_RETENTION_DAYS)
+            self._cleanup_done_at_start = True
+        elif (
+            config.MONITOR_CLEANUP_POLL_INTERVAL > 0
+            and self.poll_count % config.MONITOR_CLEANUP_POLL_INTERVAL == 0
+        ):
+            self.state_tracker.cleanup_old_data(days_to_keep=config.MONITOR_STATE_RETENTION_DAYS)
     
     def run_monitoring_loop(self):
         """Run the main monitoring loop."""
@@ -237,22 +256,20 @@ class MonitorService:
                     break
                 
                 self.poll_count += 1
-                
+                self._maybe_cleanup_state_db()
+
                 try:
                     # Poll aircraft states
                     current_states = self.poll_aircraft_states()
                     self.current_states = current_states
-                    
+
                     # Get previous states for comparison
                     previous_states = self.state_tracker.get_all_latest_states()
-                    
-                    # Get state history for each aircraft
-                    state_history = {}
-                    for icao24 in current_states.keys():
-                        # Get last 20 states for this aircraft (for better analysis)
-                        # This gives us ~20 minutes of history at 60s intervals
-                        history = self.state_tracker.get_aircraft_history(icao24, limit=20)
-                        state_history[icao24] = history
+
+                    # Get state history for all active aircraft in one query
+                    state_history = self.state_tracker.get_histories_batch(
+                        list(current_states.keys()), limit=20
+                    )
                     
                     # Process state changes and detect anomalies
                     anomalies = self.process_state_changes(
@@ -271,8 +288,6 @@ class MonitorService:
                     # Handle anomalies
                     if anomalies:
                         self.handle_anomalies(anomalies, current_states)
-                    
-                    # Print summary
                     self.notifier.notify_summary(
                         self.poll_count,
                         len(current_states),
@@ -378,10 +393,9 @@ class MonitorService:
         Returns:
             List of detected anomalies
         """
-        # Save current states to database
+        # Save current states to database in one batch
         current_timestamp = int(datetime.now().timestamp())
-        for icao24, state in current_states.items():
-            self.state_tracker.save_state_snapshot(icao24, state, current_timestamp)
+        self.state_tracker.save_state_snapshots_batch(current_states, current_timestamp)
         
         # Detect anomalies
         anomalies = self.anomaly_detector.detect_anomalies(
@@ -435,37 +449,44 @@ class MonitorService:
         
         return anomalies
     
-    def handle_anomalies(self, anomalies: List[Dict], current_states: Dict[str, Dict]):
+    def handle_anomalies(
+        self,
+        anomalies: List[Dict],
+        current_states: Dict[str, Dict],
+        model_lookup=None,
+        notify: bool = True,
+        add_detected_at: bool = False,
+        on_anomaly: Optional[Callable[[Dict], None]] = None,
+    ) -> List[Dict]:
         """
-        Handle detected anomalies (log and notify).
-        
+        Handle detected anomalies (enrich, log, and notify).
+
         Args:
             anomalies: List of anomaly dictionaries
             current_states: Current aircraft states (for location data)
+            model_lookup: Optional ModelLookup for resolving model names
+            notify: Whether to call notifier.notify_anomaly
+            add_detected_at: Whether to add detected_at ISO timestamp
+            on_anomaly: Optional callback invoked for each enriched anomaly
+
+        Returns:
+            List of enriched anomaly dictionaries
         """
+        enriched = []
         for anomaly in anomalies:
-            # Add aircraft info to anomaly for verbose output
             icao24 = anomaly.get('icao24')
             if icao24:
-                # Look up aircraft info from database
-                aircraft_info = next(
-                    (ac for ac in self.aircraft 
-                     if ac.get('mode_s_hex', '').strip().upper() == icao24.upper()),
-                    None
-                )
+                aircraft_info = self.aircraft_by_icao.get(icao24.upper())
                 if aircraft_info:
                     n_number = aircraft_info.get('n_number', 'N/A')
-                    # Ensure N-number has 'N' prefix for FlightAware URL
                     if n_number and n_number != 'N/A':
-                        # Remove any existing 'N' prefix and add it back to ensure consistency
                         n_number_clean = n_number.upper().strip()
                         if not n_number_clean.startswith('N'):
                             n_number_clean = 'N' + n_number_clean
                         flightaware_url = f"https://www.flightaware.com/live/flight/{n_number_clean}"
                     else:
                         flightaware_url = None
-                    
-                    # Get current location for Broadcastify URL (optional - don't block on this)
+
                     broadcastify_url = None
                     try:
                         current_state = current_states.get(icao24)
@@ -473,42 +494,70 @@ class MonitorService:
                             latitude = current_state.get('latitude')
                             longitude = current_state.get('longitude')
                             if latitude is not None and longitude is not None:
-                                # Try to get Broadcastify URL, but don't let it break the service
-                                # This may take a moment due to geocoding API call, but it's optional
                                 try:
                                     broadcastify_url = get_broadcastify_url_simple(latitude, longitude)
                                 except Exception:
-                                    # Geocoding failed - that's okay, just skip it
                                     broadcastify_url = None
                     except Exception:
-                        # Silently fail - geocoding is optional and shouldn't break monitoring
                         broadcastify_url = None
-                    
+
+                    model_name = aircraft_info.get('model_name', 'N/A')
+                    manufacturer = aircraft_info.get('manufacturer', 'N/A')
+                    model_code = aircraft_info.get('model_code', '')
+
+                    if model_name and model_name.upper().strip() == 'UNKNOWN':
+                        model_name = ''
+                    if manufacturer and manufacturer.upper().strip() == 'UNKNOWN':
+                        manufacturer = ''
+
+                    if not model_name and model_code and model_lookup:
+                        model_info = model_lookup.lookup(model_code)
+                        if model_info:
+                            model_name = model_info.get('model', '')
+                            if not manufacturer:
+                                manufacturer = model_info.get('manufacturer', '')
+
                     anomaly['aircraft_info'] = {
                         'n_number': n_number,
-                        'model_name': aircraft_info.get('model_name', 'N/A'),
-                        'manufacturer': aircraft_info.get('manufacturer', 'N/A'),
+                        'model_name': model_name if model_name else 'N/A',
+                        'manufacturer': manufacturer if manufacturer else 'N/A',
+                        'type_aircraft': aircraft_info.get('type_aircraft', ''),
+                        'model_code': model_code,
                         'owner_name': aircraft_info.get('owner_name', 'N/A'),
                         'owner_city': aircraft_info.get('owner_city', 'N/A'),
                         'owner_state': aircraft_info.get('owner_state', 'N/A'),
                         'flightaware_url': flightaware_url,
-                        'broadcastify_url': broadcastify_url
+                        'broadcastify_url': broadcastify_url,
                     }
-            
-            # Log to database
+
             self.state_tracker.log_anomaly(
                 icao24=icao24,
                 anomaly_type=anomaly.get('type', 'unknown'),
                 severity=anomaly.get('severity', 'UNKNOWN'),
-                details=anomaly.get('details', {})
+                details=anomaly.get('details', {}),
             )
-            
-            # Notify
-            self.notifier.notify_anomaly(anomaly)
+
+            if self.notifier.log_file:
+                self.notifier._write_to_log(anomaly)
+
+            if add_detected_at:
+                anomaly['detected_at'] = datetime.utcnow().isoformat() + 'Z'
+
+            if notify:
+                self.notifier.notify_anomaly(anomaly)
+
+            if on_anomaly:
+                on_anomaly(anomaly)
+
+            enriched.append(anomaly)
+
+        return enriched
     
     def stop(self):
         """Stop the monitoring service."""
         self.running = False
+        if hasattr(self, 'state_tracker') and self.state_tracker:
+            self.state_tracker.close()
 
 
 if __name__ == "__main__":

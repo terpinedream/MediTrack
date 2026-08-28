@@ -81,7 +81,9 @@ class OpenSkyClient:
                  client_id: Optional[str] = None, client_secret: Optional[str] = None,
                  credentials_file: Optional[Path] = None,
                  rate_limit_calls: int = 10, rate_limit_period: float = 1.0,
-                 cache_dir: Optional[Path] = None):
+                 cache_dir: Optional[Path] = None,
+                 cache_enabled: bool = True,
+                 cache_max_age_seconds: int = 60):
         """
         Initialize OpenSky client.
         
@@ -94,7 +96,11 @@ class OpenSkyClient:
             rate_limit_calls: Max API calls per period
             rate_limit_period: Time period in seconds for rate limiting
             cache_dir: Directory for caching API responses
+            cache_enabled: Whether to use response caching
+            cache_max_age_seconds: Default max age for cached responses
         """
+        self.cache_enabled = cache_enabled
+        self.cache_max_age_seconds = cache_max_age_seconds
         self.username = username
         self.password = password
         self.client_id = client_id
@@ -407,7 +413,7 @@ class OpenSkyClient:
         """
         # Check cache first (before rate limiting)
         cache_key = None
-        if use_cache:
+        if use_cache and self.cache_enabled:
             cache_key = self._get_cache_key(endpoint, params)
             cached = self._get_cached_response(cache_key, cache_max_age)
             if cached:
@@ -483,7 +489,7 @@ class OpenSkyClient:
                 data = response.json()
                 
                 # Cache successful response
-                if use_cache and response.status_code == 200:
+                if use_cache and self.cache_enabled and response.status_code == 200:
                     # Use the cache_key from outer scope, or compute if needed
                     cache_key_to_use = cache_key if cache_key else self._get_cache_key(endpoint, params)
                     self._cache_response(cache_key_to_use, data)
@@ -535,7 +541,11 @@ class OpenSkyClient:
             params['lamax'] = bbox[2]
             params['lomax'] = bbox[3]
         
-        return self._make_request("states/all", params=params, cache_max_age=5)
+        return self._make_request(
+            "states/all",
+            params=params,
+            cache_max_age=min(5, self.cache_max_age_seconds),
+        )
     
     def get_regional_states(self, bbox: tuple, icao24: Optional[List[str]] = None) -> Dict:
         """

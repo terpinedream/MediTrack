@@ -194,6 +194,8 @@ class SetupDataDialog(QDialog):
 
     def _on_build_error(self, message: str):
         self._append_log(f"Error: {message}")
+        self.progress_bar.setValue(0)
+        QMessageBox.critical(self, "Build failed", message)
 
     def _on_build_thread_finished(self):
         """Called when the worker thread has fully stopped. Safe to clear references."""

@@ -16,11 +16,13 @@ sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(Path(__file__).parent))
 
 import config
+from logging_config import setup_logging
 from monitor_service import MonitorService
 
 
 def main():
     """Main entry point."""
+    setup_logging(config.LOG_LEVEL)
     parser = argparse.ArgumentParser(
         description='Monitor EMS aircraft for unusual activity patterns',
         formatter_class=argparse.RawDescriptionHelpFormatter,

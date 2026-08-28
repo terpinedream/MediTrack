@@ -2,13 +2,13 @@
 Anomaly list widget displaying detected anomalies.
 """
 
-from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate
+from PyQt6.QtWidgets import QListWidget, QListWidgetItem, QStyledItemDelegate, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal, QRect
 from PyQt6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QFontMetrics
 from typing import Dict, List
 from datetime import datetime
 import webbrowser
-from gui.theme import COLORS, SPACING
+from gui.theme import COLORS, SPACING, SEVERITY_BADGES, get_list_stylesheet, get_current_theme
 from gui.utils import is_helicopter
 
 
@@ -55,12 +55,17 @@ class AnomalyList(QListWidget):
     
     def init_ui(self):
         """Initialize UI components."""
-        self.setAlternatingRowColors(False)  # Disable alternating colors - we use severity colors
-        self.setWordWrap(False)  # Single line items
-        self.setMinimumHeight(200)  # Ensure list has enough height to show multiple items
-        
-        # Font is inherited from global application font (set in main.py)
-        # which includes Symbola for monochrome emoji support
+        self.setAlternatingRowColors(False)
+        self.setWordWrap(False)
+        self.setMinimumHeight(200)
+        self.setAccessibleName("Anomaly list")
+
+        self._empty_label = QLabel("No anomalies detected this session", self)
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 13px; background: transparent;"
+        )
+        self._empty_label.show()
         
         # Connect item click to emit signal
         self.itemClicked.connect(self._on_item_clicked)
@@ -68,21 +73,38 @@ class AnomalyList(QListWidget):
         # Connect selection change to update text color
         self.itemSelectionChanged.connect(self._on_selection_changed)
         
-        self.setStyleSheet(f"""
-            QListWidget {{
-                background-color: {COLORS['bg_main']};
-                border: 1px solid {COLORS['border']};
-            }}
-            QListWidget::item {{
-                padding: {SPACING['sm']}px {SPACING['md']}px;
-                border-bottom: 1px solid {COLORS['border']};
-                min-height: 24px;
-            }}
-            QListWidget::item:selected {{
-                border: 2px solid {COLORS['selection']};
-                border-left: 4px solid {COLORS['selection']};
-            }}
-        """)
+        self._update_empty_state()
+        self._apply_styles()
+
+    def _apply_styles(self):
+        self.setStyleSheet(get_list_stylesheet())
+        self._empty_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 13px; background: transparent;"
+        )
+
+    def refresh_theme(self):
+        """Re-apply styles after theme change."""
+        self._apply_styles()
+        self._on_selection_changed()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_empty_label'):
+            self._empty_label.setGeometry(self.viewport().rect())
+
+    def _update_empty_state(self):
+        if self.count() == 0:
+            self._empty_label.setGeometry(self.viewport().rect())
+            self._empty_label.show()
+            self._empty_label.raise_()
+        else:
+            self._empty_label.hide()
+
+    def clear_session(self):
+        """Clear all anomalies from the session list."""
+        self.anomalies.clear()
+        self.clear()
+        self._update_empty_state()
     
     def _on_selection_changed(self):
         """Handle selection change to ensure text is readable."""
@@ -102,9 +124,9 @@ class AnomalyList(QListWidget):
                 # Set text color based on severity (not selection state)
                 # The blue border indicates selection, text should remain readable on colored background
                 if severity in ['CRITICAL', 'HIGH']:
-                    item.setForeground(Qt.GlobalColor.white)
+                    item.setForeground(QColor(COLORS['text_inverse']))
                 else:
-                    item.setForeground(Qt.GlobalColor.black)
+                    item.setForeground(QColor(COLORS['text_inverse'] if get_current_theme() == 'dark' else '#111827'))
     
     def _on_item_clicked(self, item: QListWidgetItem):
         """Handle item click - emit ICAO24 for navigation."""
@@ -146,12 +168,13 @@ class AnomalyList(QListWidget):
             except Exception:
                 pass
         
-        # Build display text: [time] ✈ [TAG] N-Number: Anomaly Type
+        # Build display text with severity badge prefix
+        badge = SEVERITY_BADGES.get(severity, '???')
         if n_number != 'N/A':
-            base = f"{plane_symbol} {tag} {n_number}: {anomaly_type_title}"
+            base = f"[{badge}] {plane_symbol} {tag} {n_number}: {anomaly_type_title}"
         else:
             icao24 = anomaly.get('icao24', 'UNKNOWN')
-            base = f"{plane_symbol} {tag} {icao24}: {anomaly_type_title}"
+            base = f"[{badge}] {plane_symbol} {tag} {icao24}: {anomaly_type_title}"
         text = f"{time_str} - {base}" if time_str else base
         item.setText(text)
         if tooltip_time:
@@ -171,9 +194,11 @@ class AnomalyList(QListWidget):
         # For critical/high (red/amber), use white text
         # For medium/low (yellow/green), use dark text
         if severity in ['CRITICAL', 'HIGH']:
-            text_color = Qt.GlobalColor.white
+            text_color = QColor(COLORS['text_inverse'])
+        elif get_current_theme() == 'dark':
+            text_color = QColor(COLORS['text_inverse'])
         else:
-            text_color = Qt.GlobalColor.black
+            text_color = QColor('#111827')
         
         item.setForeground(text_color)
         item.setData(Qt.ItemDataRole.ForegroundRole, text_color)
@@ -193,6 +218,8 @@ class AnomalyList(QListWidget):
         # Limit to 100 items
         if self.count() > 100:
             self.takeItem(self.count() - 1)
+
+        self._update_empty_state()
     
     def _color_from_hex(self, hex_color: str, opacity: int = 255):
         """

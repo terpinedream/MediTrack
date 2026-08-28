@@ -82,10 +82,9 @@ MASTER.txt
 ACFTREF.txt
 
 # Test files (not included in repository)
+tests/
 test_*.py
 *_test.py
-tests/__pycache__/
-!tests/test_aircraft_filter.py
 
 # Filter configuration (tracked)
 !data/known_operators.json

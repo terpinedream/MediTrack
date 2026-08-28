@@ -55,6 +55,8 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 MONITOR_INTERVAL_SECONDS = int(os.getenv("MONITOR_INTERVAL_SECONDS", "60"))
 MONITOR_REGION = os.getenv("MONITOR_REGION", None)  # 'northeast', 'midwest', 'south', 'west', 'all'
 MONITOR_STATE = os.getenv("MONITOR_STATE", None)  # Comma-separated state codes (e.g., 'NJ' or 'NJ,DE,PA')
+MONITOR_STATE_RETENTION_DAYS = int(os.getenv("MONITOR_STATE_RETENTION_DAYS", "30"))
+MONITOR_CLEANUP_POLL_INTERVAL = int(os.getenv("MONITOR_CLEANUP_POLL_INTERVAL", "100"))
 
 # Anomaly detection thresholds
 ANOMALY_SPEED_THRESHOLD_KNOTS = float(os.getenv("ANOMALY_SPEED_THRESHOLD_KNOTS", "150.0"))

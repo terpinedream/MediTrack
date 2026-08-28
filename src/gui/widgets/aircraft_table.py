@@ -4,7 +4,7 @@ Aircraft data table widget.
 
 from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QStyledItemDelegate, QStyle,
+    QStyledItemDelegate, QStyle, QLabel,
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize, QRect
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPen
@@ -20,7 +20,7 @@ if str(Path(__file__).parent.parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from location_utils import get_location_name_from_coordinates
-from gui.theme import COLORS, SPACING
+from gui.theme import COLORS, SPACING, FONT_FAMILY, FONT_FAMILY_MONO, get_table_stylesheet
 from owner_tags import (
     classify_from_aircraft,
     format_tag_labels,
@@ -29,19 +29,20 @@ from owner_tags import (
 )
 
 AIRCRAFT_COLUMNS = [
-    'Model', 'ICAO24', 'Callsign', 'N-Number', 'Confidence', 'Tags',
+    '★', 'Model', 'ICAO24', 'Callsign', 'N-Number', 'Confidence', 'Tags',
     'Status', 'Speed (kts)', 'Altitude (ft)', 'Location',
 ]
-COL_MODEL = 0
-COL_ICAO24 = 1
-COL_CALLSIGN = 2
-COL_N_NUMBER = 3
-COL_CONFIDENCE = 4
-COL_TAGS = 5
-COL_STATUS = 6
-COL_SPEED = 7
-COL_ALTITUDE = 8
-COL_LOCATION = 9
+COL_STAR = 0
+COL_MODEL = 1
+COL_ICAO24 = 2
+COL_CALLSIGN = 3
+COL_N_NUMBER = 4
+COL_CONFIDENCE = 5
+COL_TAGS = 6
+COL_STATUS = 7
+COL_SPEED = 8
+COL_ALTITUDE = 9
+COL_LOCATION = 10
 
 
 class AircraftTableDelegate(QStyledItemDelegate):
@@ -75,7 +76,7 @@ class TagsDelegate(QStyledItemDelegate):
     PILL_PAD_X = 6
     PILL_PAD_Y = 2
     PILL_GAP = 5
-    PILL_RADIUS = 4
+    PILL_RADIUS = 8
 
     def paint(self, painter: QPainter, option, index):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
@@ -156,20 +157,15 @@ class LocationLookupWorker(QThread):
 
 class AircraftTable(QTableWidget):
     """Table widget displaying active aircraft."""
-    
-    # Signal emitted when aircraft row is clicked
-    aircraft_clicked = pyqtSignal(str)  # Emits ICAO24
-    
-    def __init__(self, parent=None, model_lookup=None):
-        """
-        Initialize aircraft table.
-        
-        Args:
-            parent: Parent widget
-            model_lookup: Optional ModelLookup instance for looking up model names
-        """
+
+    aircraft_clicked = pyqtSignal(str)
+    star_toggled = pyqtSignal(str, bool)
+
+    def __init__(self, parent=None, model_lookup=None, empty_message: str = None):
         super().__init__(parent)
         self.model_lookup = model_lookup
+        self.starred_icao24s: Set[str] = set()
+        self._empty_message = empty_message or "No active aircraft — click Start Monitoring"
         self.init_ui()
         self.aircraft_data = {}  # Store full aircraft data for links
         self.aircraft_states = {}  # Store current aircraft states
@@ -179,6 +175,13 @@ class AircraftTable(QTableWidget):
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._process_pending_updates)
         self.active_lookup_workers = []  # Track active workers
+        self._row_by_icao: Dict[str, int] = {}
+        self._empty_label = QLabel(self._empty_message, self)
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_label.setStyleSheet(
+            f"color: {COLORS['text_muted']}; font-size: 14px; background: transparent;"
+        )
+        self._empty_label.hide()
     
     def init_ui(self):
         """Initialize UI components."""
@@ -196,6 +199,12 @@ class AircraftTable(QTableWidget):
         self.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.setSortingEnabled(True)
+        self.verticalHeader().setVisible(False)
+        self.setCornerButtonEnabled(False)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         
         # Connect item click signal
         self.itemClicked.connect(self._on_item_clicked)
@@ -207,29 +216,90 @@ class AircraftTable(QTableWidget):
         # Resize columns to content
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(COL_STAR, QHeaderView.ResizeMode.Fixed)
+        self.setColumnWidth(COL_STAR, 36)
         header.setSectionResizeMode(COL_MODEL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_ICAO24, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(COL_LOCATION, QHeaderView.ResizeMode.Stretch)
         
         # Style
-        self.setStyleSheet(f"""
-            QTableWidget {{
-                gridline-color: {COLORS['border']};
-                background-color: {COLORS['bg_main']};
-            }}
-            QTableWidget::item {{
-                padding: {SPACING['xs']}px;
-            }}
-            QTableWidget::item:selected {{
-                background-color: {COLORS['selection']};
-                color: {COLORS['text_inverse']};
-            }}
-        """)
+        self.setStyleSheet(get_table_stylesheet())
+        self._apply_mono_columns()
+
+    def _apply_mono_columns(self):
+        """Use monospace font for identifier columns only."""
+        mono_font = self.font()
+        mono_font.setFamilies(FONT_FAMILY_MONO.split(', '))
+        for col in (COL_ICAO24, COL_CALLSIGN, COL_N_NUMBER):
+            for row in range(self.rowCount()):
+                item = self.item(row, col)
+                if item:
+                    item.setFont(mono_font)
+
+    def set_starred_icao24s(self, starred: Set[str]):
+        """Update which rows show a filled star."""
+        self.starred_icao24s = set(starred or [])
+        for row in range(self.rowCount()):
+            icao_item = self.item(row, COL_ICAO24)
+            star_item = self.item(row, COL_STAR)
+            if icao_item and star_item:
+                icao = icao_item.text().upper()
+                self._apply_star_cell(star_item, icao in self.starred_icao24s)
+
+    def _apply_star_cell(self, star_item: QTableWidgetItem, starred: bool):
+        star_item.setText("★" if starred else "☆")
+        star_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        star_item.setToolTip("Remove from starred" if starred else "Add to starred")
+        if starred:
+            star_item.setForeground(QColor(COLORS.get('star', COLORS['warning'])))
+        else:
+            star_item.setForeground(QColor(COLORS.get('text_muted', '#6b7280')))
+
+    def _set_star_cell(self, row: int, icao24: str, existing_row):
+        starred = icao24.upper() in self.starred_icao24s
+        star_item = self.item(row, COL_STAR) if existing_row is not None else None
+        if star_item is None:
+            star_item = QTableWidgetItem()
+            star_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            self.setItem(row, COL_STAR, star_item)
+        self._apply_star_cell(star_item, starred)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_empty_label'):
+            self._empty_label.setGeometry(self.viewport().rect())
+
+    def _rebuild_row_index(self):
+        """Rebuild icao24 -> row index map after structural changes."""
+        self._row_by_icao = {}
+        for row in range(self.rowCount()):
+            item = self.item(row, COL_ICAO24)
+            if item and item.text():
+                self._row_by_icao[item.text()] = row
+
+    def _update_empty_state(self):
+        """Show or hide empty-state overlay."""
+        if not self.aircraft_states:
+            self._empty_label.setGeometry(self.viewport().rect())
+            self._empty_label.show()
+            self._empty_label.raise_()
+        else:
+            self._empty_label.hide()
     
-    def update_aircraft(self, aircraft_states: Dict, aircraft_db: list, anomaly_icao24s: Optional[Set[str]] = None):
+    def update_aircraft(
+        self,
+        aircraft_states: Dict,
+        aircraft_db: list,
+        anomaly_icao24s: Optional[Set[str]] = None,
+        active_icao24s: Optional[Set[str]] = None,
+    ):
         """Update table with new aircraft data (batched to prevent freezing)."""
-        # Store current states for popup access
         self.aircraft_states = aircraft_states.copy()
+        aircraft_db_by_icao = {
+            ac.get('mode_s_hex', '').strip().upper(): ac
+            for ac in aircraft_db
+            if ac.get('mode_s_hex')
+        }
         
         # Disable sorting during update for performance
         was_sorting = self.isSortingEnabled()
@@ -248,6 +318,8 @@ class AircraftTable(QTableWidget):
             
             for row in rows_to_remove:
                 self.removeRow(row)
+
+            self._rebuild_row_index()
             
             # Anomaly row background
             anomaly_brush = None
@@ -260,26 +332,17 @@ class AircraftTable(QTableWidget):
             
             # Update or add aircraft
             for icao24, state in aircraft_states.items():
-                # Find existing row
-                existing_row = None
-                for r in range(self.rowCount()):
-                    item = self.item(r, COL_ICAO24)
-                    if item and item.text() == icao24:
-                        existing_row = r
-                        break
-                
-                # Find aircraft in database
-                aircraft_info = next(
-                    (ac for ac in aircraft_db
-                     if ac.get('mode_s_hex', '').strip().upper() == icao24.upper()),
-                    None
-                )
+                existing_row = self._row_by_icao.get(icao24)
+                aircraft_info = aircraft_db_by_icao.get(icao24.upper())
                 
                 if existing_row is not None:
                     row = existing_row
                 else:
                     row = self.rowCount()
                     self.insertRow(row)
+                    self._row_by_icao[icao24] = row
+
+                self._set_star_cell(row, icao24, existing_row)
                 
                 model_name_looked_up = ''
                 manufacturer_looked_up = ''
@@ -340,7 +403,9 @@ class AircraftTable(QTableWidget):
                 ))
                 
                 on_ground = state.get('on_ground')
-                if on_ground is True:
+                if active_icao24s is not None and icao24.upper() not in {i.upper() for i in active_icao24s}:
+                    status_text = 'Not active'
+                elif on_ground is True:
                     status_text = 'On ground'
                 elif on_ground is False:
                     status_text = 'In air'
@@ -373,10 +438,10 @@ class AircraftTable(QTableWidget):
                     
                     if cache_key in self.location_cache:
                         location_item.setText(self.location_cache[cache_key])
-                        location_item.setForeground(Qt.GlobalColor.blue)
+                        location_item.setForeground(QColor(COLORS['text_link']))
                     else:
-                        location_item.setText(f"{lat:.4f}, {lon:.4f}")
-                        location_item.setForeground(Qt.GlobalColor.black)
+                        location_item.setText("Resolving…")
+                        location_item.setForeground(QColor(COLORS['text_muted']))
                         if not hasattr(self, '_location_lookup_queue'):
                             self._location_lookup_queue = []
                             self._location_lookup_timer = QTimer()
@@ -389,7 +454,7 @@ class AircraftTable(QTableWidget):
                 else:
                     location_item.setText("N/A")
                     location_item.setData(Qt.ItemDataRole.UserRole, None)
-                    location_item.setForeground(Qt.GlobalColor.black)
+                    location_item.setForeground(QColor(COLORS['text_muted']))
                 
                 # Store aircraft data for link access
                 if aircraft_info:
@@ -459,6 +524,9 @@ class AircraftTable(QTableWidget):
             self.setSortingEnabled(was_sorting)
             if was_sorting:
                 self.sortItems(COL_ICAO24, Qt.SortOrder.AscendingOrder)
+            self._rebuild_row_index()
+            self._apply_mono_columns()
+            self._update_empty_state()
 
     def _set_cell_text(self, row: int, col: int, text: str, existing_row):
         """Create or update a plain-text table cell."""
@@ -499,7 +567,7 @@ class AircraftTable(QTableWidget):
         if location_item:
             try:
                 location_item.setText(location_text)
-                location_item.setForeground(Qt.GlobalColor.blue)
+                location_item.setForeground(QColor(COLORS['text_link']))
             except RuntimeError:
                 # Item may have been deleted, ignore
                 pass
@@ -510,8 +578,17 @@ class AircraftTable(QTableWidget):
         pass
     
     def _on_item_clicked(self, item: QTableWidgetItem):
-        """Handle item click - emit ICAO24 signal for detail dialog."""
+        """Handle item click - star toggle or detail dialog."""
         row = item.row()
+        if item.column() == COL_STAR:
+            icao24_item = self.item(row, COL_ICAO24)
+            if icao24_item:
+                icao24 = icao24_item.text()
+                if icao24:
+                    starred = icao24.upper() in self.starred_icao24s
+                    self.star_toggled.emit(icao24, not starred)
+            return
+
         icao24_item = self.item(row, COL_ICAO24)
         if icao24_item:
             icao24 = icao24_item.text()
@@ -520,9 +597,10 @@ class AircraftTable(QTableWidget):
     
     def select_aircraft_by_icao24(self, icao24: str) -> bool:
         """Select and scroll to aircraft with given ICAO24."""
-        for row in range(self.rowCount()):
+        row = self._row_by_icao.get(icao24)
+        if row is not None:
             item = self.item(row, COL_ICAO24)
-            if item and item.text() == icao24:
+            if item:
                 self.selectRow(row)
                 self.scrollToItem(item)
                 return True
@@ -564,7 +642,7 @@ class AircraftTable(QTableWidget):
                     
                     # Visual feedback - briefly change text color
                     original_color = item.foreground()
-                    item.setForeground(Qt.GlobalColor.green)
+                    item.setForeground(QColor(COLORS['success']))
                     
                     # Reset color after 500ms
                     QTimer.singleShot(500, lambda: item.setForeground(original_color))
