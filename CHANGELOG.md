@@ -7,6 +7,29 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-28
+
+### Added
+
+- Starred aircraft: click ☆ on an active flight to keep it in a persistent starred panel and on the map across database and region changes.
+- Dark mode toggle (**Settings → Dark mode**).
+- Map fullscreen view (**Fullscreen** on the map panel; **Esc** to exit).
+- Sudden speed increase anomaly detection (compares recent poll history to current speed).
+- Edit menu: show/hide table columns, reset column widths, reset layout.
+- Keyboard shortcuts: `Ctrl+R` start/resume, `Ctrl+P` pause, `Ctrl+Shift+S` stop, `Ctrl+E` export active aircraft CSV.
+- Session anomaly count in the sidebar status panel.
+- Structured logging via `LOG_LEVEL` in `config.py` / `.env`.
+- GitHub Actions CI workflow.
+- Updated application logo and sidebar branding.
+
+### Changed
+
+- Dashboard UI refresh with card-based sidebar, updated theme, and a **Settings** button for monitoring configuration (database, region, states).
+- **Setup data** moved to **Settings → Setup data (FAA download)...**; opens automatically on first run when no database exists.
+- Throttled aircraft table updates to reduce UI freezing during rapid OpenSky polls.
+- Monitor worker, state persistence, and OpenSky client polling improvements.
+- README screenshots updated to match the current dashboard.
+
 ## [0.2.0] - 2026-08-27
 
 ### Added

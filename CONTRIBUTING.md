@@ -22,7 +22,11 @@ python3 src/filter_police_aircraft.py
 python3 src/run_gui.py
 ```
 
+On first launch, **Setup data** opens if no EMS or Police database exists. Use **Settings → Setup data (FAA download)...** to rebuild databases later. The sidebar **Settings** button opens monitoring configuration (database, region, states).
+
 Do not commit `ReleasableAircraft/`, generated files under `data/*.json`, `.env`, or `credentials.json`.
+
+Test files under `tests/` are for local development only and are not tracked in this repository.
 
 ## Where to change things
 
@@ -33,6 +37,7 @@ Do not commit `ReleasableAircraft/`, generated files under `data/*.json`, `.env`
 | Exclude flight schools, tours, etc. | `data/negative_owner_keywords.txt` |
 | Allowlist a known operator | `data/known_operators.json` |
 | Change list-view owner tags | `src/owner_tags.py` |
+| Change starred aircraft persistence | `src/gui/starred_store.py` |
 | Change scoring / confidence | `src/aircraft_filter/base.py` |
 | Change live monitoring or anomalies | `src/monitor_service.py`, `src/anomaly_detector.py` |
 | Change the dashboard | `src/gui/` |
@@ -46,7 +51,7 @@ After changing model or owner keyword files, rebuild the databases. Owner tags a
 - Prefer a focused change with a short explanation of *why*.
 - Keep the existing code style (no unused imports or drive-by refactors).
 - Update `CHANGELOG.md` under `[Unreleased]` for user-facing changes.
-- If the GUI changed, say how you verified it (running `src/run_gui.py` is enough).
+- If the GUI changed, say how you verified it (running `src/run_gui.py` is enough). Include a screenshot when the layout or list view changed.
 
 ## Reporting issues
 
