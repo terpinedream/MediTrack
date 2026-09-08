@@ -57,6 +57,11 @@ pip install -r requirements.txt
 
 3. **Run**
    - **GUI**: `python3 src/run_gui.py` (or `python3 -m gui.main` from `src/`).
+   - **Linux desktop app** (app menu / `meditrack` command):
+     ```bash
+     ./packaging/linux/install.sh
+     ```
+     Then launch **MediTrack** from your application menu, or run `meditrack`. Uninstall with `./packaging/linux/install.sh --uninstall`.
    - Use the sidebar **Settings** button to change database, region, or states (stop monitoring first).
    - **CLI**: `python3 src/run_monitor.py --database ems --region west --interval 60`
 

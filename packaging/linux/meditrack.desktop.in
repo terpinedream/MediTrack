@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MediTrack
+GenericName=EMS Aircraft Tracker
+Comment=Track and monitor EMS and police aircraft via OpenSky
+Exec=@EXEC@
+Icon=@ICON@
+Terminal=false
+Categories=Utility;
+Keywords=aircraft;EMS;aviation;ADS-B;OpenSky;
+StartupNotify=true
+StartupWMClass=MediTrack
